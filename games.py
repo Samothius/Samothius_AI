@@ -56,6 +56,7 @@ from config import (
     TWITCH_CLIENT_ID, 
     STREAMER_NAME,
     CHAT_OVERLAY_WS_PORT
+    SAMOBIT_EMOTE
 )
 from database import DatabaseManager
 
@@ -303,7 +304,7 @@ class SamothiusTwitchBot(commands.Bot):
             reward = random.randint(500, 1500) * crew_size
             for p in self.heist_participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
-            await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {reward} {CURRENCY_NAME} each!")
+            await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {reward} {CURRENCY_NAME} {SAMOBIT_EMOTE} each!")
         else:
             for p in self.heist_participants:
                 self.heist_prison_until[p] = time.time() + 300 
@@ -318,7 +319,7 @@ class SamothiusTwitchBot(commands.Bot):
         msg = ctx.message.content.split()
         if len(msg) > 1 and msg[1].lower() == "balance":
             bal = self.db.get_balance_by_twitch_name(user)
-            await ctx.send(f"  @{user}, you currently have {bal} {CURRENCY_NAME}.")
+            await ctx.send(f"  @{user}, you currently have {bal} {CURRENCY_NAME} {SAMOBIT_EMOTE}")
 
     @commands.command(name="bossstatus")
     async def boss_status(self, ctx):
@@ -366,7 +367,7 @@ class SamothiusTwitchBot(commands.Bot):
             reward = 500
             for p in self.participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
-            await ctx.send(f"🎉 The {self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {CURRENCY_NAME}!")
+            await ctx.send(f"🎉 The {self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {CURRENCY_NAME} {SAMOBIT_EMOTE}")
             self.boss_state = "IDLE"
 
     @commands.command(name="gamble")
@@ -379,7 +380,7 @@ class SamothiusTwitchBot(commands.Bot):
             
         bal = self.db.get_balance_by_twitch_name(user)
         if amount < GAMBLE_MIN_BET:
-            await ctx.send(f"  @{user}, minimum bet is {GAMBLE_MIN_BET} {CURRENCY_NAME}.")
+            await ctx.send(f"  @{user}, minimum bet is {GAMBLE_MIN_BET} {CURRENCY_NAME} {SAMOBIT_EMOTE}")
             return
         if amount > bal:
             await ctx.send(f"  @{user}, insufficient balance.")
@@ -393,20 +394,20 @@ class SamothiusTwitchBot(commands.Bot):
             winnings = amount * 5
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
-                f"  JACKPOT @{user}! Net +{winnings - amount} {CURRENCY_NAME}. "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)}"
+                f"  JACKPOT @{user}! Net +{winnings - amount} {CURRENCY_NAME} {SAMOBIT_EMOTE} "
+                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
         elif roll < 0.45:
             winnings = amount * 2
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
-                f"  @{user} won! Net +{amount} {CURRENCY_NAME}. "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)}"
+                f"  @{user} won! Net +{amount} {CURRENCY_NAME} {SAMOBIT_EMOTE} "
+                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
         else:
             await ctx.send(
-                f"  @{user} lost. -{amount} {CURRENCY_NAME}. "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)}"
+                f"  @{user} lost. -{amount} {CURRENCY_NAME} {SAMOBIT_EMOTE} "
+                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
 
     @commands.command(name="heist")
@@ -474,8 +475,8 @@ class SamothiusTwitchBot(commands.Bot):
             
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
-            f"  @{user} caught {tier}! +{reward} {CURRENCY_NAME}. "
-            f"Balance: {self.db.get_balance_by_twitch_name(user)}"
+            f"  @{user} caught {tier}! +{reward} {CURRENCY_NAME} {SAMOBIT_EMOTE} "
+            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
         )
 
 if __name__ == "__main__":
