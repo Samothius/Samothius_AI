@@ -211,7 +211,7 @@ class SamothiusTwitchBot(commands.Bot):
         await self.handle_commands(message)
     
     # --- HELPER FUNCTIONS ---
-    def _set_cooldown(self, command, user, seconds=60):
+    def _set_cooldown(self, command, user, seconds=120):
         if command not in self.cooldowns:
             self.cooldowns[command] = {}
         self.cooldowns[command][user] = time.time() + seconds
