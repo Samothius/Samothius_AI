@@ -4,7 +4,7 @@ import asyncio
 import datetime
 import time
 
-from config import DISCORD_TOKEN, STREAM_NOTIFICATION_ROLE_ID
+from config import DISCORD_TOKEN, STREAM_NOTIFICATION_ROLE_ID, SAMOBIT_EMOJI
 from database import DatabaseManager
 from twitch_api import TwitchApiClient
 
