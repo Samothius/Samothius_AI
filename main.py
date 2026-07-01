@@ -81,7 +81,7 @@ class SamothiusBot(commands.Bot):
             )
             status_embed.add_field(name="⏱️ Bot Uptime", value=f"`{uptime_str}`", inline=True)
             status_embed.add_field(name="📡 API Ping", value=f"`{round(self.latency * 1000)}ms`", inline=True)
-            status_embed.add_field(name="👥 Total Economy", value=f"{total_users} Users\n{total_volume} SamoBits {SAMOBIT_EMOJI}", inline=False)
+            status_embed.add_field(name="👥 Total Economy", value=f"{total_users} Users\n{total_volume} {SAMOBIT_EMOJI}", inline=False)
             status_embed.add_field(name="⚙️ Daily Stats", value=f"Commands Run: `{self.daily_commands_run}`\nErrors Caught: `{self.daily_errors}`", inline=False)
             
             await log_thread.send(embed=status_embed)
@@ -208,7 +208,7 @@ async def leaderboard(ctx):
     else:
         leaderboard_text = ""
         for idx, (name, bal) in enumerate(top_users, 1):
-            leaderboard_text += f"**{idx}.** {name} — {bal} SamoBit {SAMOBIT_EMOJI}\n"
+            leaderboard_text += f"**{idx}.** {name} — {bal} {SAMOBIT_EMOJI}\n"
         embed.description = leaderboard_text
         
     embed.set_footer(text="Updated in real-time")
