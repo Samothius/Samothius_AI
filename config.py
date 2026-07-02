@@ -20,6 +20,7 @@ SAMOBIT_EMOJI = "<:samobit:1521140544821264504>"
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET", "")
 TMI_TOKEN = os.getenv("TMI_TOKEN", "")
+EVENTSUB_TOKEN = os.getenv("EVENTSUB_TOKEN", "")
 STREAMER_NAME = os.getenv("STREAMER_NAME", "samothius").lower()
 SAMOBIT_EMOTE = "samoth12Samobit"
 
