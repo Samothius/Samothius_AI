@@ -135,13 +135,25 @@ class DatabaseManager:
         result = cursor.fetchone()
         return result[0] if result and result[0] is not None else 0
 
+    BLACKLISTED_USERS = {
+    "samothius_ai",
+    "streamelements",
+    "fossabot",
+    "nightbot",
+    "moobot",
+    "streamlabs",
+    }
+
     def get_top_richest_users(self, limit: int = 10) -> list:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT twitch_name, samobit_balance FROM users ORDER BY samobit_balance DESC LIMIT ?",
-            (limit,)
-        )
-        return cursor.fetchall()
+    cursor = self.conn.cursor()
+    placeholders = ",".join("?" * len(BLACKLISTED_USERS))
+    cursor.execute(
+        f"SELECT twitch_name, samobit_balance FROM users "
+        f"WHERE twitch_name NOT IN ({placeholders}) "
+        f"ORDER BY samobit_balance DESC LIMIT ?",
+        (*BLACKLISTED_USERS, limit)
+    )
+    return cursor.fetchall()
 
     # --- STREAM EVENTS (CREDITS) METHODS ---
     
