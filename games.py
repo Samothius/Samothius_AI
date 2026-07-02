@@ -59,6 +59,7 @@ from config import (
     TMI_TOKEN,
     TWITCH_CLIENT_ID,
     TWITCH_CLIENT_SECRET,
+    EVENTSUB_TOKEN,
     STREAMER_NAME,
     CHAT_OVERLAY_WS_PORT,
     SAMOBIT_EMOTE
@@ -374,7 +375,7 @@ class SamothiusTwitchBot(commands.Bot):
             "Fish Buff":         ("fish_personal", 7200),   # 2 saat
             "Global Fish Buff":  ("fish_global",   1800),   # 30 dk
         }
-        token = TMI_TOKEN.lstrip("oauth:")
+        token = EVENTSUB_TOKEN.lstrip("oauth:")
         broadcaster_id = await self._fetch_broadcaster_id()
         if not broadcaster_id:
             print("⚠️ Channel Points EventSub disabled: broadcaster ID alınamadı.")
