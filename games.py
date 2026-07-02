@@ -56,8 +56,9 @@ HEIST_WIN_MULTIPLIER = 2
 
 # --- CONFIG IMPORTS ---
 from config import (
-    TMI_TOKEN, 
-    TWITCH_CLIENT_ID, 
+    TMI_TOKEN,
+    TWITCH_CLIENT_ID,
+    TWITCH_CLIENT_SECRET,
     STREAMER_NAME,
     CHAT_OVERLAY_WS_PORT,
     SAMOBIT_EMOTE
@@ -330,17 +331,36 @@ class SamothiusTwitchBot(commands.Bot):
 
     # --- CHANNEL POINTS (EventSub WebSocket) ---
     async def _fetch_broadcaster_id(self) -> Optional[str]:
-        token = TMI_TOKEN.lstrip("oauth:")
-        url = f"https://api.twitch.tv/helix/users?login={STREAMER_NAME}"
-        headers = {"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        users = data.get("data", [])
-                        if users:
-                            return users[0]["id"]
+                # Önce app access token al
+                token_resp = await session.post(
+                    "https://id.twitch.tv/oauth2/token",
+                    params={
+                        "client_id": TWITCH_CLIENT_ID,
+                        "client_secret": TWITCH_CLIENT_SECRET,
+                        "grant_type": "client_credentials",
+                    }
+                )
+                token_data = await token_resp.json()
+                app_token = token_data.get("access_token")
+                if not app_token:
+                    print(f"⚠️ App token alınamadı: {token_data}")
+                    return None
+
+                # Broadcaster ID'yi sorgula
+                headers = {
+                    "Client-ID": TWITCH_CLIENT_ID,
+                    "Authorization": f"Bearer {app_token}",
+                }
+                resp = await session.get(
+                    f"https://api.twitch.tv/helix/users?login={STREAMER_NAME}",
+                    headers=headers
+                )
+                data = await resp.json()
+                users = data.get("data", [])
+                if users:
+                    return users[0]["id"]
         except Exception as e:
             print(f"⚠️ Could not fetch broadcaster ID: {e}")
         return None
