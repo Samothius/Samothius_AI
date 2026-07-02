@@ -145,15 +145,15 @@ class DatabaseManager:
     }
 
     def get_top_richest_users(self, limit: int = 10) -> list:
-    cursor = self.conn.cursor()
-    placeholders = ",".join("?" * len(BLACKLISTED_USERS))
-    cursor.execute(
-        f"SELECT twitch_name, samobit_balance FROM users "
-        f"WHERE twitch_name NOT IN ({placeholders}) "
-        f"ORDER BY samobit_balance DESC LIMIT ?",
-        (*BLACKLISTED_USERS, limit)
-    )
-    return cursor.fetchall()
+        cursor = self.conn.cursor()
+        placeholders = ",".join("?" * len(self.BLACKLISTED_USERS))
+        cursor.execute(
+            f"SELECT twitch_name, samobit_balance FROM users "
+            f"WHERE twitch_name NOT IN ({placeholders}) "
+            f"ORDER BY samobit_balance DESC LIMIT ?",
+            (*self.BLACKLISTED_USERS, limit)
+        )
+        return cursor.fetchall()
 
     # --- STREAM EVENTS (CREDITS) METHODS ---
     
