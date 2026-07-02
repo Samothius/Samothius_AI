@@ -135,6 +135,26 @@ class DatabaseManager:
         result = cursor.fetchone()
         return result[0] if result and result[0] is not None else 0
 
+    def get_last_daily(self, twitch_name: str) -> Optional[str]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT last_daily FROM users WHERE twitch_name = ?", (twitch_name.lower(),))
+        result = cursor.fetchone()
+        return result[0] if result else None
+
+    def set_last_daily(self, twitch_name: str, timestamp: str) -> None:
+        cursor = self.conn.cursor()
+        twitch_name = twitch_name.lower()
+        cursor.execute(
+            """
+            INSERT INTO users (twitch_name, last_daily)
+            VALUES (?, ?)
+            ON CONFLICT(twitch_name)
+            DO UPDATE SET last_daily = ?
+            """,
+            (twitch_name, timestamp, timestamp),
+        )
+        self.conn.commit()
+
     BLACKLISTED_USERS = {
     "samothius_ai",
     "streamelements",
