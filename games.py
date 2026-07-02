@@ -1,10 +1,11 @@
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import random
 import time
 import asyncio
 import json
 import re
 import websockets
+import aiohttp
 from twitchio.ext import commands, routines
 
 BANNED_PHRASES = [
@@ -42,6 +43,9 @@ BANNED_PHRASES = [
     "do your graphics",
     "cheap emotes",
     "custom stream overlay"
+    "streamboo.com"
+    "streamboo. com"
+    "streamboo .com"
 ]
 
 # --- GAME SETTINGS ---
@@ -59,6 +63,7 @@ from config import (
     SAMOBIT_EMOTE
 )
 from database import DatabaseManager
+from typing import Optional
 
 class SamothiusTwitchBot(commands.Bot):
     def __init__(self):
@@ -90,6 +95,13 @@ class SamothiusTwitchBot(commands.Bot):
         # Chat tracking for Boss spawn logic
         self.boss_active_users = set()
 
+        # !first state (bot restart = yeni stream, tek seferlik)
+        self.first_claimer = None
+
+        # Fish buff state (Channel Points ile aktive edilir)
+        self.fish_buff_personal = {}    # {username: expires_at_timestamp}
+        self.fish_buff_global_until = 0.0
+
         # Chat Overlay: connected OBS browser-source WebSocket clients
         self.overlay_clients = set()
 
@@ -99,6 +111,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
         self.loop.create_task(self.start_overlay_ws_server())
+        self.loop.create_task(self._channel_points_eventsub())
 
     # --- CHAT OVERLAY WEBSOCKET BRIDGE ---
     async def start_overlay_ws_server(self):
@@ -256,7 +269,10 @@ class SamothiusTwitchBot(commands.Bot):
                     f"🎰 Feeling lucky? Try your chance with !gamble <amount> and double your {CURRENCY_NAME}!",
                     f"🎣 Need some extra {CURRENCY_NAME}? Type !fish to see what you can catch in our channel's waters!",
                     "🦹 Planning a heist? Type !heist to gather your crew and rob the bank. Higher crew size means higher success rate!",
-                    f"💰 Don't forget to check your wealth with !samobit balance! Can you reach the top of the leaderboard?"
+                    f"💰 Don't forget to check your wealth with !samobit balance! Can you reach the top of the leaderboard?",
+                    f"☀️ Claim your free daily 200 {CURRENCY_NAME} with !daily — come back every 24 hours!",
+                    f"🦹 Feeling bold? Try !rob @username to steal 20% of their {CURRENCY_NAME}. But watch out — you might get caught!",
+                    f"🎁 Want to share the wealth? Use !gift @username <amount> to send {CURRENCY_NAME} to a friend!",
                 ]
                 chan = self.get_channel(STREAMER_NAME)
                 if chan:
@@ -311,6 +327,116 @@ class SamothiusTwitchBot(commands.Bot):
             await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for 5 minutes!")
             
         self.heist_participants.clear()
+
+    # --- CHANNEL POINTS (EventSub WebSocket) ---
+    async def _fetch_broadcaster_id(self) -> Optional[str]:
+        token = TMI_TOKEN.lstrip("oauth:")
+        url = f"https://api.twitch.tv/helix/users?login={STREAMER_NAME}"
+        headers = {"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        users = data.get("data", [])
+                        if users:
+                            return users[0]["id"]
+        except Exception as e:
+            print(f"⚠️ Could not fetch broadcaster ID: {e}")
+        return None
+
+    async def _channel_points_eventsub(self):
+        """Twitch EventSub WebSocket: Channel Points ödüllerini dinler."""
+        EVENTSUB_WS = "wss://eventsub.wss.twitch.tv/ws"
+        REWARD_ACTIONS = {
+            "Buy 1000 SamoBits": ("samobit", 1000),
+            "Buy 5000 SamoBits": ("samobit", 5000),
+            "Fish Buff":         ("fish_personal", 7200),   # 2 saat
+            "Global Fish Buff":  ("fish_global",   1800),   # 30 dk
+        }
+        token = TMI_TOKEN.lstrip("oauth:")
+        broadcaster_id = await self._fetch_broadcaster_id()
+        if not broadcaster_id:
+            print("⚠️ Channel Points EventSub disabled: broadcaster ID alınamadı.")
+            return
+
+        while True:
+            try:
+                async with websockets.connect(EVENTSUB_WS) as ws:
+                    # 1. Welcome mesajından session_id al
+                    raw = await ws.recv()
+                    msg = json.loads(raw)
+                    if msg.get("metadata", {}).get("message_type") != "session_welcome":
+                        continue
+                    session_id = msg["payload"]["session"]["id"]
+
+                    # 2. Channel Points redemption subscribe
+                    sub_url = "https://api.twitch.tv/helix/eventsub/subscriptions"
+                    headers = {
+                        "Client-ID": TWITCH_CLIENT_ID,
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    }
+                    body = {
+                        "type": "channel.channel_points_custom_reward_redemption.add",
+                        "version": "1",
+                        "condition": {"broadcaster_user_id": broadcaster_id},
+                        "transport": {"method": "websocket", "session_id": session_id},
+                    }
+                    async with aiohttp.ClientSession() as http:
+                        async with http.post(sub_url, headers=headers, json=body) as resp:
+                            if resp.status not in (200, 202):
+                                text = await resp.text()
+                                print(f"⚠️ EventSub subscription failed ({resp.status}): {text}")
+                                return
+                            print("✅ Channel Points EventSub aktif!")
+
+                    # 3. Olayları dinle
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        mtype = msg.get("metadata", {}).get("message_type", "")
+
+                        if mtype == "session_keepalive":
+                            continue
+                        if mtype == "session_reconnect":
+                            break  # döngü yeniden bağlanacak
+
+                        if mtype == "notification":
+                            event = msg.get("payload", {}).get("event", {})
+                            reward_title = event.get("reward", {}).get("title", "")
+                            redeemer = event.get("user_login", "").lower()
+                            action = REWARD_ACTIONS.get(reward_title)
+                            if not action:
+                                continue
+                            chan = self.get_channel(STREAMER_NAME)
+                            kind, value = action
+
+                            if kind == "samobit":
+                                self.db.add_samobit_by_twitch_name(redeemer, value)
+                                if chan:
+                                    await chan.send(
+                                        f"  🎉 @{redeemer} redeemed '{reward_title}' and received "
+                                        f"{value} {SAMOBIT_EMOTE}! "
+                                        f"Balance: {self.db.get_balance_by_twitch_name(redeemer)} {SAMOBIT_EMOTE}"
+                                    )
+                            elif kind == "fish_personal":
+                                self.fish_buff_personal[redeemer] = time.time() + value
+                                if chan:
+                                    await chan.send(
+                                        f"  🎣 @{redeemer} activated Fish Buff! "
+                                        f"3x rare fish chance for 2 hours! {SAMOBIT_EMOTE}"
+                                    )
+                            elif kind == "fish_global":
+                                self.fish_buff_global_until = time.time() + value
+                                if chan:
+                                    await chan.send(
+                                        f"  🌊 @{redeemer} activated Global Fish Buff! "
+                                        f"2x rare fish chance for EVERYONE for 30 minutes! {SAMOBIT_EMOTE}"
+                                    )
+
+            except Exception as e:
+                print(f"⚠️ Channel Points EventSub hatası: {e}. 30s sonra yeniden bağlanıyor...")
+                await asyncio.sleep(30)
 
     # --- TWITCH COMMANDS ---
     @commands.command(name="samobit")
@@ -446,6 +572,102 @@ class SamothiusTwitchBot(commands.Bot):
         self.heist_participants.add(user)
         await ctx.send(f"  @{user} joined the heist crew!")
 
+    @commands.command(name="daily")
+    async def daily(self, ctx):
+        user = ctx.author.name.lower()
+        now = datetime.now(timezone.utc)
+        last = self.db.get_last_daily(user)
+        if last:
+            last_dt = datetime.fromisoformat(last)
+            diff = now - last_dt
+            if diff.total_seconds() < 86400:
+                remaining_h = int((86400 - diff.total_seconds()) / 3600)
+                remaining_m = int(((86400 - diff.total_seconds()) % 3600) / 60)
+                await ctx.send(f"  @{user}, your next daily is in {remaining_h}h {remaining_m}m.")
+                return
+        self.db.add_samobit_by_twitch_name(user, 200)
+        self.db.set_last_daily(user, now.isoformat())
+        await ctx.send(
+            f"  ☀️ @{user} claimed their daily 200 {SAMOBIT_EMOTE}! "
+            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+        )
+
+    @commands.command(name="rob")
+    async def rob(self, ctx):
+        user = ctx.author.name.lower()
+        parts = ctx.message.content.split()
+        if len(parts) < 2:
+            await ctx.send(f"  @{user}, usage: !rob @target")
+            return
+        target = parts[1].lstrip("@").lower()
+        if target == user:
+            await ctx.send(f"  @{user}, you can't rob yourself!")
+            return
+        remaining = self._get_remaining_cooldown("rob", user)
+        if remaining:
+            await ctx.send(f"  @{user}, rob cooldown: {remaining}s.")
+            return
+        target_bal = self.db.get_balance_by_twitch_name(target)
+        if target_bal < 50:
+            await ctx.send(f"  @{user}, @{target} doesn't have enough {SAMOBIT_EMOTE} to rob (min 50).")
+            return
+        self._set_cooldown("rob", user, seconds=300)
+        steal = int(target_bal * 0.20)
+        if random.random() < 0.40:
+            self.db.add_samobit_by_twitch_name(target, -steal)
+            self.db.add_samobit_by_twitch_name(user, steal)
+            await ctx.send(
+                f"  🦹 @{user} successfully robbed @{target} for {steal} {SAMOBIT_EMOTE}! "
+                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+            )
+        else:
+            penalty = 300
+            actual_penalty = min(penalty, self.db.get_balance_by_twitch_name(user))
+            self.db.add_samobit_by_twitch_name(user, -actual_penalty)
+            await ctx.send(
+                f"  🚨 @{user} got caught trying to rob @{target}! "
+                f"Penalty: -{actual_penalty} {SAMOBIT_EMOTE}."
+            )
+
+    @commands.command(name="gift")
+    async def gift(self, ctx):
+        user = ctx.author.name.lower()
+        parts = ctx.message.content.split()
+        if len(parts) < 3:
+            await ctx.send(f"  @{user}, usage: !gift @target <amount>")
+            return
+        target = parts[1].lstrip("@").lower()
+        try:
+            amount = int(parts[2])
+        except ValueError:
+            await ctx.send(f"  @{user}, amount must be a number.")
+            return
+        if target == user:
+            await ctx.send(f"  @{user}, you can't gift yourself!")
+            return
+        if amount < 10:
+            await ctx.send(f"  @{user}, minimum gift is 10 {SAMOBIT_EMOTE}.")
+            return
+        if amount > self.db.get_balance_by_twitch_name(user):
+            await ctx.send(f"  @{user}, insufficient balance.")
+            return
+        self.db.add_samobit_by_twitch_name(user, -amount)
+        self.db.add_samobit_by_twitch_name(target, amount)
+        await ctx.send(f"  🎁 @{user} gifted {amount} {SAMOBIT_EMOTE} to @{target}!")
+
+    @commands.command(name="first")
+    async def first(self, ctx):
+        user = ctx.author.name.lower()
+        if self.first_claimer is not None:
+            await ctx.send(f"  Reward for !first already given to @{self.first_claimer}.")
+            return
+        self.first_claimer = user
+        self.db.add_samobit_by_twitch_name(user, 500)
+        await ctx.send(
+            f"  🥇 @{user} was FIRST in chat today! +500 {SAMOBIT_EMOTE}! "
+            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+        )
+
     @commands.command(name="fish")
     async def fish(self, ctx):
         user = ctx.author.name.lower()
@@ -456,26 +678,37 @@ class SamothiusTwitchBot(commands.Bot):
             
         self._set_cooldown("fish", user)
         roll = random.random() * 100
-        
-        if roll < 90.0:
-            tier = "an Anchovy"
-            reward = random.randint(100, 500)
-        elif roll < 96.5:
-            tier = "a Sea Bream"
-            reward = random.randint(500, 2000)
-        elif roll < 99.0:
-            tier = "a Bluefish"
-            reward = random.randint(2000, 10000)
-        elif roll < 99.5:
-            tier = "a Norwegian Salmon"
-            reward = random.randint(10000, 50000)
+
+        # Buff kontrolü (kişisel buff, global buff'tan önce gelir)
+        now = time.time()
+        has_personal = self.fish_buff_personal.get(user, 0) > now
+        has_global = self.fish_buff_global_until > now
+
+        if has_personal:
+            rare_pool = 30.0   # 3x nadir şans
+            buff_tag = " ✨[FISH BUFF]"
+        elif has_global:
+            rare_pool = 20.0   # 2x nadir şans
+            buff_tag = " 🌊[GLOBAL BUFF]"
         else:
-            tier = "a Treasure Chest!"
-            reward = random.randint(50000, 99999)
-            
+            rare_pool = 10.0   # normal
+            buff_tag = ""
+
+        anchovy_max = 100.0 - rare_pool
+        if roll < anchovy_max:
+            tier, reward = "an Anchovy", random.randint(100, 500)
+        elif roll < anchovy_max + rare_pool * 0.65:
+            tier, reward = "a Sea Bream", random.randint(500, 2000)
+        elif roll < anchovy_max + rare_pool * 0.90:
+            tier, reward = "a Bluefish", random.randint(2000, 10000)
+        elif roll < anchovy_max + rare_pool * 0.95:
+            tier, reward = "a Norwegian Salmon", random.randint(10000, 50000)
+        else:
+            tier, reward = "a Treasure Chest!", random.randint(50000, 99999)
+
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
-            f"  @{user} caught {tier}! +{reward} {SAMOBIT_EMOTE} "
+            f"  @{user} caught {tier}!{buff_tag} +{reward} {SAMOBIT_EMOTE} "
             f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
         )
 
