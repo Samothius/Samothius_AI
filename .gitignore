@@ -15,3 +15,4 @@ economy.db
 
 # Log files
 *.log
+nohup.out
