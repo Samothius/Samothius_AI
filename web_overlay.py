@@ -594,7 +594,8 @@ def show_game():
 </head><body>
 <div id="overlay">
     <div id="fish">🐟</div>
-    <div id="label">!fish</div>
+    <div id="label">a wild fish appeared!</div>
+    <div id="label">type !fish to catch</div>
     <div id="timer">20s</div>
 </div>
 <script>
