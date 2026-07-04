@@ -104,6 +104,10 @@ class SamothiusTwitchBot(commands.Bot):
         self.fish_buff_personal = {}    # {username: expires_at_timestamp}
         self.fish_buff_global_until = 0.0
 
+        # Fishing window state (overlay ile senkron)
+        self.fish_window_active = False
+        self.fish_window_participants = set()
+
         # Chat Overlay: connected OBS browser-source WebSocket clients
         self.overlay_clients = set()
 
@@ -114,6 +118,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.chat_engagement_loop.start()
         self.loop.create_task(self.start_overlay_ws_server())
         self.loop.create_task(self._channel_points_eventsub())
+        self.loop.create_task(self._fishing_window_loop())
 
     # --- CHAT OVERLAY WEBSOCKET BRIDGE ---
     async def start_overlay_ws_server(self):
@@ -158,6 +163,37 @@ class SamothiusTwitchBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Failed to parse native emote tag: {e}")
         return emotes
+
+    async def broadcast_game_event(self, event: dict):
+        """Oyun olaylarını (fishing window vs.) overlay'e gönderir."""
+        if not self.overlay_clients:
+            return
+        payload = json.dumps(event)
+        await asyncio.gather(
+            *(client.send(payload) for client in list(self.overlay_clients)),
+            return_exceptions=True
+        )
+
+    async def _fishing_window_loop(self):
+        """Her 4-8 dakikada bir 20 saniyelik fishing window açar."""
+        await asyncio.sleep(60)  # Bot tam başlasın diye 1 dk bekle
+        while True:
+            wait = random.randint(240, 480)  # 4-8 dakika
+            await asyncio.sleep(wait)
+
+            chan = self.get_channel(STREAMER_NAME)
+            if not chan:
+                continue
+
+            self.fish_window_active = True
+            self.fish_window_participants.clear()
+            await self.broadcast_game_event({"type": "fishing_event", "state": "active", "duration": 20})
+            await chan.send(f"🎣 A fish appeared on the overlay! Type !fish NOW — 20 seconds! {SAMOBIT_EMOTE}")
+
+            await asyncio.sleep(20)
+
+            self.fish_window_active = False
+            await self.broadcast_game_event({"type": "fishing_event", "state": "idle"})
 
     async def broadcast_chat_message(self, author, content, native_emotes=None):
         if not self.overlay_clients:
@@ -692,12 +728,16 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="fish")
     async def fish(self, ctx):
         user = ctx.author.name.lower()
-        remaining = self._get_remaining_cooldown("fish", user)
-        if remaining:
-            await ctx.send(f"  @{user}, wait {remaining}s to fish again.")
+
+        if not self.fish_window_active:
+            await ctx.send(f"  @{user}, 🎣 Watch the overlay for the fishing icon — type !fish then!")
             return
-            
-        self._set_cooldown("fish", user)
+
+        if user in self.fish_window_participants:
+            await ctx.send(f"  @{user}, you already fished this round! Wait for the next one.")
+            return
+
+        self.fish_window_participants.add(user)
         roll = random.random() * 100
 
         # Buff kontrolü (kişisel buff, global buff'tan önce gelir)
