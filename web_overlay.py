@@ -538,5 +538,309 @@ def show_chat():
     </body>
     </html>"""
 
+# --- GAME OVERLAY ROUTE ---
+@app.route('/game')
+def show_game():
+    return f"""<html><head>
+<style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+        background: transparent;
+        width: 420px;
+        height: 300px;
+        overflow: hidden;
+        font-family: 'Courier New', monospace;
+        image-rendering: pixelated;
+    }}
+    #game-wrap {{
+        width: 420px;
+        height: 300px;
+        position: relative;
+        background: transparent;
+    }}
+
+    /* SKY */
+    #sky {{
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 140px;
+        background: linear-gradient(180deg, #0a0a1a 0%, #1a1a3a 100%);
+        transition: background 0.5s;
+    }}
+    #game-wrap.active #sky {{
+        background: linear-gradient(180deg, #0d1b2a 0%, #1b3a5c 100%);
+    }}
+
+    /* WATER */
+    #water {{
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 165px;
+        background: linear-gradient(180deg, #0a3d6b 0%, #051e38 100%);
+        overflow: hidden;
+    }}
+    .wave {{
+        position: absolute;
+        top: 0;
+        width: 200%;
+        height: 12px;
+        background: repeating-linear-gradient(
+            90deg,
+            transparent 0px, transparent 6px,
+            rgba(100,180,255,0.25) 6px, rgba(100,180,255,0.25) 12px
+        );
+        animation: waveMove 3s linear infinite;
+    }}
+    .wave2 {{
+        top: 8px;
+        animation: waveMove 4s linear infinite reverse;
+        opacity: 0.5;
+    }}
+    @keyframes waveMove {{
+        from {{ transform: translateX(0); }}
+        to {{ transform: translateX(-50%); }}
+    }}
+
+    /* SURFACE LINE */
+    #surface {{
+        position: absolute;
+        top: 135px; left: 0; right: 0;
+        height: 2px;
+        background: rgba(100, 200, 255, 0.3);
+    }}
+
+    /* FISHING ROD */
+    #rod-wrap {{
+        position: absolute;
+        top: 20px;
+        left: 30px;
+    }}
+    #rod {{
+        width: 8px;
+        height: 100px;
+        background: #8B6914;
+        transform: rotate(25deg);
+        transform-origin: bottom left;
+        position: relative;
+        border-radius: 2px;
+    }}
+    #rod::after {{
+        content: '';
+        position: absolute;
+        top: 0; left: 0;
+        width: 4px;
+        height: 100px;
+        background: rgba(255,255,255,0.15);
+        border-radius: 2px;
+    }}
+
+    /* FISHING LINE */
+    #line {{
+        position: absolute;
+        top: 18px;
+        left: 96px;
+        width: 2px;
+        height: 110px;
+        background: rgba(200, 220, 255, 0.7);
+        transform-origin: top center;
+        animation: lineBob 2s ease-in-out infinite;
+    }}
+    @keyframes lineBob {{
+        0%, 100% {{ transform: scaleY(1); }}
+        50% {{ transform: scaleY(0.97); }}
+    }}
+    #game-wrap.active #line {{
+        animation: linePull 0.4s ease-in-out infinite alternate;
+        background: rgba(255, 220, 50, 0.9);
+    }}
+    @keyframes linePull {{
+        from {{ transform: scaleY(1) rotate(-2deg); }}
+        to {{ transform: scaleY(0.9) rotate(2deg); }}
+    }}
+
+    /* HOOK */
+    #hook {{
+        position: absolute;
+        top: 216px;
+        left: 90px;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(200,220,255,0.8);
+        border-radius: 0 0 8px 8px;
+        border-top: none;
+    }}
+
+    /* FISH (hidden until active) */
+    #fish-sprite {{
+        position: absolute;
+        top: 195px;
+        left: 60px;
+        font-size: 28px;
+        opacity: 0;
+        transform: scaleX(-1);
+        transition: opacity 0.3s;
+        filter: drop-shadow(0 0 6px rgba(100,220,255,0.8));
+        animation: fishSwim 0.5s ease-in-out infinite alternate;
+    }}
+    @keyframes fishSwim {{
+        from {{ transform: scaleX(-1) translateY(0px); }}
+        to {{ transform: scaleX(-1) translateY(-4px); }}
+    }}
+    #game-wrap.active #fish-sprite {{
+        opacity: 1;
+    }}
+
+    /* BUBBLES */
+    .bubble {{
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(100,200,255,0.4);
+        animation: bubbleRise 2s ease-in infinite;
+        opacity: 0;
+    }}
+    @keyframes bubbleRise {{
+        0% {{ opacity: 0.6; transform: translateY(0); }}
+        100% {{ opacity: 0; transform: translateY(-40px); }}
+    }}
+
+    /* STATUS PANEL */
+    #status-panel {{
+        position: absolute;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(5, 15, 30, 0.85);
+        border: 1px solid rgba(100, 180, 255, 0.2);
+        border-radius: 8px;
+        padding: 10px 20px;
+        text-align: center;
+        min-width: 240px;
+        transition: border-color 0.3s;
+    }}
+    #game-wrap.active #status-panel {{
+        border-color: rgba(255, 200, 50, 0.6);
+        box-shadow: 0 0 12px rgba(255, 200, 50, 0.2);
+    }}
+    #status-text {{
+        font-size: 13px;
+        color: rgba(150, 200, 255, 0.7);
+        letter-spacing: 2px;
+        text-transform: uppercase;
+    }}
+    #game-wrap.active #status-text {{
+        color: #FFD700;
+        font-size: 15px;
+        font-weight: bold;
+        animation: pulse 0.6s ease-in-out infinite alternate;
+    }}
+    @keyframes pulse {{
+        from {{ opacity: 1; }}
+        to {{ opacity: 0.6; }}
+    }}
+    #timer {{
+        font-size: 22px;
+        color: #FFD700;
+        font-weight: bold;
+        margin-top: 4px;
+        display: none;
+    }}
+    #game-wrap.active #timer {{ display: block; }}
+
+    /* STARS */
+    .star {{
+        position: absolute;
+        width: 2px;
+        height: 2px;
+        background: white;
+        border-radius: 50%;
+        opacity: 0.6;
+    }}
+</style>
+</head><body>
+<div id="game-wrap">
+    <div id="sky">
+        <!-- Stars -->
+        <div class="star" style="top:15px;left:40px;opacity:0.8"></div>
+        <div class="star" style="top:30px;left:120px"></div>
+        <div class="star" style="top:10px;left:200px;opacity:0.9"></div>
+        <div class="star" style="top:50px;left:280px;opacity:0.5"></div>
+        <div class="star" style="top:20px;left:350px;opacity:0.7"></div>
+        <div class="star" style="top:45px;left:390px"></div>
+        <div class="star" style="top:8px;left:310px;opacity:0.8"></div>
+        <div class="star" style="top:60px;left:160px;opacity:0.4"></div>
+    </div>
+    <div id="surface"></div>
+    <div id="water">
+        <div class="wave"></div>
+        <div class="wave wave2"></div>
+        <!-- Bubbles -->
+        <div class="bubble" style="left:95px;top:50px;animation-delay:0s;animation-duration:2.2s"></div>
+        <div class="bubble" style="left:100px;top:70px;animation-delay:0.8s;animation-duration:1.8s"></div>
+        <div class="bubble" style="left:88px;top:60px;animation-delay:1.5s;animation-duration:2.5s"></div>
+    </div>
+    <div id="rod-wrap">
+        <div id="rod"></div>
+    </div>
+    <div id="line"></div>
+    <div id="hook"></div>
+    <div id="fish-sprite">🐟</div>
+    <div id="status-panel">
+        <div id="status-text">Waiting for fish...</div>
+        <div id="timer">20</div>
+    </div>
+</div>
+
+<script>
+    const wrap = document.getElementById('game-wrap');
+    const statusText = document.getElementById('status-text');
+    const timerEl = document.getElementById('timer');
+    let timerInterval = null;
+
+    function startActive(duration) {{
+        wrap.classList.add('active');
+        statusText.textContent = '!fish — Cast Now!';
+        let remaining = duration;
+        timerEl.textContent = remaining;
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(() => {{
+            remaining--;
+            timerEl.textContent = remaining;
+            if (remaining <= 0) {{
+                clearInterval(timerInterval);
+                setIdle();
+            }}
+        }}, 1000);
+    }}
+
+    function setIdle() {{
+        wrap.classList.remove('active');
+        statusText.textContent = 'Waiting for fish...';
+        timerEl.textContent = '';
+        if (timerInterval) clearInterval(timerInterval);
+    }}
+
+    function connect() {{
+        const ws = new WebSocket('ws://' + window.location.hostname + ':{CHAT_OVERLAY_WS_PORT}');
+        ws.onmessage = (event) => {{
+            try {{
+                const data = JSON.parse(event.data);
+                if (data.type === 'fishing_event') {{
+                    if (data.state === 'active') {{
+                        startActive(data.duration || 20);
+                    }} else {{
+                        setIdle();
+                    }}
+                }}
+            }} catch(e) {{ console.error(e); }}
+        }};
+        ws.onclose = () => setTimeout(connect, 3000);
+        ws.onerror = () => ws.close();
+    }}
+    connect();
+</script>
+</body></html>"""
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, threaded=True)
