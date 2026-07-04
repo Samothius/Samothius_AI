@@ -621,16 +621,20 @@ def show_game():
     }}
 
     function connect() {{
-        const ws = new WebSocket('ws://' + window.location.hostname + ':{CHAT_OVERLAY_WS_PORT}');
+        const wsUrl = 'ws://' + window.location.hostname + ':{CHAT_OVERLAY_WS_PORT}';
+        console.log('[Overlay] Connecting to:', wsUrl);
+        const ws = new WebSocket(wsUrl);
+        ws.onopen = () => console.log('[Overlay] WebSocket connected ✅');
         ws.onmessage = (e) => {{
+            console.log('[Overlay] Message received:', e.data);
             try {{
                 const data = JSON.parse(e.data);
                 if (data.type === 'fishing_event')
                     data.state === 'active' ? show(data.duration || 20) : hide();
-            }} catch(err) {{}}
+            }} catch(err) {{ console.error('[Overlay] Parse error:', err); }}
         }};
-        ws.onclose = () => setTimeout(connect, 3000);
-        ws.onerror  = () => ws.close();
+        ws.onclose = (e) => {{ console.warn('[Overlay] WebSocket closed:', e.code, e.reason); setTimeout(connect, 3000); }};
+        ws.onerror = (e) => {{ console.error('[Overlay] WebSocket error:', e); ws.close(); }};
     }}
     connect();
 </script>
