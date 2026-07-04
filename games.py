@@ -188,7 +188,7 @@ class SamothiusTwitchBot(commands.Bot):
             self.fish_window_active = True
             self.fish_window_participants.clear()
             await self.broadcast_game_event({"type": "fishing_event", "state": "active", "duration": 20})
-            await chan.send(f"🎣 A fish appeared on the overlay! Type !fish NOW — 20 seconds! {SAMOBIT_EMOTE}")
+            #await chan.send(f"🎣 A fish appeared on the overlay! Type !fish NOW — 20 seconds! {SAMOBIT_EMOTE}")
 
             await asyncio.sleep(20)
 
