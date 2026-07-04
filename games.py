@@ -4,6 +4,7 @@ import time
 import asyncio
 import json
 import re
+import threading
 import websockets
 import aiohttp
 from twitchio.ext import commands, routines
@@ -110,24 +111,30 @@ class SamothiusTwitchBot(commands.Bot):
 
         # Chat Overlay: connected OBS browser-source WebSocket clients
         self.overlay_clients = set()
+        self._ws_loop = None  # WebSocket sunucusunun kendi event loop'u
 
     async def event_ready(self):
         print(f"✅ Twitch Bot connected as {self.nick}")
         self.gift_samobit_loop.start()
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
-        self.loop.create_task(self.start_overlay_ws_server())
+        t = threading.Thread(target=self._start_ws_server_thread, daemon=True)
+        t.start()
         self.loop.create_task(self._channel_points_eventsub())
         self.loop.create_task(self._fishing_window_loop())
 
     # --- CHAT OVERLAY WEBSOCKET BRIDGE ---
-    async def start_overlay_ws_server(self):
-        """Runs a WebSocket server that the OBS browser-source chat overlay
-        connects to. Every clean chat message is broadcast to it live."""
+    def _start_ws_server_thread(self):
+        """WebSocket sunucusunu TwitchIO'dan bağımsız kendi thread'inde çalıştırır."""
+        self._ws_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._ws_loop)
+        self._ws_loop.run_until_complete(self._run_ws_server())
+
+    async def _run_ws_server(self):
         try:
             async with websockets.serve(self._overlay_ws_handler, "0.0.0.0", CHAT_OVERLAY_WS_PORT):
                 print(f"✅ Chat overlay WebSocket listening on port {CHAT_OVERLAY_WS_PORT}")
-                await asyncio.Future()  # run forever
+                await asyncio.Future()  # sonsuza kadar çalış
         except Exception as e:
             print(f"⚠️ Chat overlay WebSocket server failed to start: {e}")
 
@@ -165,14 +172,25 @@ class SamothiusTwitchBot(commands.Bot):
         return emotes
 
     async def broadcast_game_event(self, event: dict):
-        """Oyun olaylarını (fishing window vs.) overlay'e gönderir."""
-        if not self.overlay_clients:
+        """Oyun olaylarını overlay'e gönderir (thread-safe)."""
+        if not self.overlay_clients or self._ws_loop is None:
             return
         payload = json.dumps(event)
-        await asyncio.gather(
-            *(client.send(payload) for client in list(self.overlay_clients)),
-            return_exceptions=True
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_to_all(payload), self._ws_loop
         )
+        try:
+            future.result(timeout=2)
+        except Exception:
+            pass
+
+    async def _send_to_all(self, payload: str):
+        """WS loop'unda çalışır, tüm clientlara gönderir."""
+        if self.overlay_clients:
+            await asyncio.gather(
+                *(client.send(payload) for client in list(self.overlay_clients)),
+                return_exceptions=True
+            )
 
     async def _fishing_window_loop(self):
         """Her 4-8 dakikada bir 20 saniyelik fishing window açar."""
@@ -196,7 +214,7 @@ class SamothiusTwitchBot(commands.Bot):
             await self.broadcast_game_event({"type": "fishing_event", "state": "idle"})
 
     async def broadcast_chat_message(self, author, content, native_emotes=None):
-        if not self.overlay_clients:
+        if not self.overlay_clients or self._ws_loop is None:
             return
         color = getattr(author, "colour", None) or getattr(author, "color", None)
         payload = json.dumps({
@@ -208,10 +226,13 @@ class SamothiusTwitchBot(commands.Bot):
             "is_broadcaster": author.name.lower() == STREAMER_NAME.lower(),
             "native_emotes": native_emotes or [],
         })
-        await asyncio.gather(
-            *(client.send(payload) for client in list(self.overlay_clients)),
-            return_exceptions=True
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_to_all(payload), self._ws_loop
         )
+        try:
+            future.result(timeout=2)
+        except Exception:
+            pass
         
     async def event_message(self, message):
         if message.echo:
