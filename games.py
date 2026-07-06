@@ -43,9 +43,9 @@ BANNED_PHRASES = [
     "my discord tag",
     "do your graphics",
     "cheap emotes",
-    "custom stream overlay"
-    "streamboo.com"
-    "streamboo. com"
+    "custom stream overlay",
+    "streamboo.com",
+    "streamboo. com",
     "streamboo .com"
 ]
 
@@ -134,7 +134,7 @@ class SamothiusTwitchBot(commands.Bot):
         try:
             async with websockets.serve(self._overlay_ws_handler, "0.0.0.0", CHAT_OVERLAY_WS_PORT):
                 print(f"✅ Chat overlay WebSocket listening on port {CHAT_OVERLAY_WS_PORT}")
-                await asyncio.Future()  # sonsuza kadar çalış
+                await asyncio.Future()
         except Exception as e:
             print(f"⚠️ Chat overlay WebSocket server failed to start: {e}")
 
@@ -194,7 +194,7 @@ class SamothiusTwitchBot(commands.Bot):
 
     async def _fishing_window_loop(self):
         """Her 4-8 dakikada bir 20 saniyelik fishing window açar."""
-        await asyncio.sleep(60)  # Bot tam başlasın diye 1 dk bekle
+        await asyncio.sleep(60)
         while True:
             wait = random.randint(240, 480)  # 4-8 dakika
             await asyncio.sleep(wait)
@@ -206,7 +206,6 @@ class SamothiusTwitchBot(commands.Bot):
             self.fish_window_active = True
             self.fish_window_participants.clear()
             await self.broadcast_game_event({"type": "fishing_event", "state": "active", "duration": 20})
-            #await chan.send(f"🎣 A fish appeared on the overlay! Type !fish NOW — 20 seconds! {SAMOBIT_EMOTE}")
 
             await asyncio.sleep(20)
 
@@ -304,7 +303,9 @@ class SamothiusTwitchBot(commands.Bot):
             if not chan or not chan.chatters:
                 return
             for chatter in chan.chatters:
-                self.db.add_samobit_by_twitch_name(chatter.name.lower(), 10)
+                name = chatter.name.lower()
+                if name not in DatabaseManager.BLACKLISTED_USERS:
+                    self.db.add_samobit_by_twitch_name(name, 10)
         except Exception as e:
             print(f"⚠️ Error in gift_samobit_loop: {e}")
             
@@ -358,7 +359,6 @@ class SamothiusTwitchBot(commands.Bot):
         if self.boss_state == "ACTIVE":
             if chan:
                 if len(self.participants) > 0:
-                    # YENİ DÜZELTME: Süre dolduğunda boss ölmemişse, kaçtığını belirtiyoruz.
                     await chan.send(f"💀 Time is up! The {self.current_boss} survived with {self.boss_hp} HP and escaped. Better luck next time!")
                 else:
                     await chan.send(f"💀 The {self.current_boss} escaped because no one attacked...")
@@ -391,7 +391,6 @@ class SamothiusTwitchBot(commands.Bot):
     async def _fetch_broadcaster_id(self) -> Optional[str]:
         try:
             async with aiohttp.ClientSession() as session:
-                # Önce app access token al
                 token_resp = await session.post(
                     "https://id.twitch.tv/oauth2/token",
                     params={
@@ -441,14 +440,12 @@ class SamothiusTwitchBot(commands.Bot):
         while True:
             try:
                 async with websockets.connect(EVENTSUB_WS) as ws:
-                    # 1. Welcome mesajından session_id al
                     raw = await ws.recv()
                     msg = json.loads(raw)
                     if msg.get("metadata", {}).get("message_type") != "session_welcome":
                         continue
                     session_id = msg["payload"]["session"]["id"]
 
-                    # 2. Channel Points redemption subscribe
                     sub_url = "https://api.twitch.tv/helix/eventsub/subscriptions"
                     headers = {
                         "Client-ID": TWITCH_CLIENT_ID,
@@ -469,7 +466,6 @@ class SamothiusTwitchBot(commands.Bot):
                                 return
                             print("✅ Channel Points EventSub aktif!")
 
-                    # 3. Olayları dinle
                     async for raw in ws:
                         msg = json.loads(raw)
                         mtype = msg.get("metadata", {}).get("message_type", "")
@@ -477,7 +473,7 @@ class SamothiusTwitchBot(commands.Bot):
                         if mtype == "session_keepalive":
                             continue
                         if mtype == "session_reconnect":
-                            break  # döngü yeniden bağlanacak
+                            break
 
                         if mtype == "notification":
                             event = msg.get("payload", {}).get("event", {})
@@ -559,7 +555,6 @@ class SamothiusTwitchBot(commands.Bot):
         
         self.participants.add(user)
         
-        # YENİ DÜZELTME: Hasar hesaplamasında can eksiye düşmemesi için limit koyduk.
         damage = random.randint(50, 150)
         actual_damage = min(damage, self.boss_hp)
         self.boss_hp -= actual_damage
@@ -761,19 +756,18 @@ class SamothiusTwitchBot(commands.Bot):
         self.fish_window_participants.add(user)
         roll = random.random() * 100
 
-        # Buff kontrolü (kişisel buff, global buff'tan önce gelir)
         now = time.time()
         has_personal = self.fish_buff_personal.get(user, 0) > now
         has_global = self.fish_buff_global_until > now
 
         if has_personal:
-            rare_pool = 30.0   # 3x nadir şans
+            rare_pool = 30.0
             buff_tag = " ✨[FISH BUFF]"
         elif has_global:
-            rare_pool = 20.0   # 2x nadir şans
+            rare_pool = 20.0
             buff_tag = " 🌊[GLOBAL BUFF]"
         else:
-            rare_pool = 10.0   # normal
+            rare_pool = 10.0
             buff_tag = ""
 
         anchovy_max = 100.0 - rare_pool
