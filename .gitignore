@@ -16,3 +16,6 @@ economy.db
 # Log files
 *.log
 nohup.out
+*.db-shm
+*.db-wal
+venv/
