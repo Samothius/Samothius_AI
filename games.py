@@ -51,9 +51,6 @@ BANNED_PHRASES = [
 
 # --- GAME SETTINGS ---
 CURRENCY_NAME = "SamoBit"
-GAMBLE_MIN_BET = 10
-HEIST_LOBBY_SECONDS = 60
-HEIST_WIN_MULTIPLIER = 2
 
 # --- CONFIG IMPORTS ---
 from config import (
@@ -345,7 +342,9 @@ class SamothiusTwitchBot(commands.Bot):
     async def spawn_boss_logic(self, manual=False):
         self.boss_state = "ACTIVE"
         self.current_boss = random.choice(["Dragon", "Goblin King", "Dark Knight"])
-        self.boss_hp = random.randint(300, 1000)
+        hp_min = self.db.get_setting("boss_hp_min", 300)
+        hp_max = self.db.get_setting("boss_hp_max", 1000)
+        self.boss_hp = random.randint(hp_min, hp_max)
         self.boss_max_hp = self.boss_hp
         self.participants.clear()
         
@@ -366,7 +365,8 @@ class SamothiusTwitchBot(commands.Bot):
             self.boss_state = "IDLE"
 
     async def _resolve_heist_lobby(self, chan):
-        await asyncio.sleep(HEIST_LOBBY_SECONDS)
+        lobby_seconds = self.db.get_setting("heist_lobby_seconds", 60)
+        await asyncio.sleep(lobby_seconds)
         self.heist_lobby_active = False
         
         if len(self.heist_participants) == 0:
@@ -375,19 +375,25 @@ class SamothiusTwitchBot(commands.Bot):
         crew_size = len(self.heist_participants)
         success_chance = min(30 + (crew_size * 5), 80)
         roll = random.random() * 100
+
+        reward_min = self.db.get_setting("heist_reward_min", 400)
+        reward_max = self.db.get_setting("heist_reward_max", 900)
+        cooldown_seconds = self.db.get_setting("heist_cooldown_seconds", 180)
+        prison_seconds = self.db.get_setting("heist_prison_seconds", 600)
+        prison_minutes = int(prison_seconds / 60)
         
         if roll <= success_chance:
-            total_reward = random.randint(400, 900) * crew_size
+            total_reward = random.randint(reward_min, reward_max) * crew_size
             reward_each = total_reward // crew_size
             for p in self.heist_participants:
                 self.db.add_samobit_by_twitch_name(p, reward_each)
-                self._set_cooldown("heist", p, seconds=180)
+                self._set_cooldown("heist", p, seconds=cooldown_seconds)
             await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {total_reward} {SAMOBIT_EMOTE}, split {reward_each} each!")
         else:
             for p in self.heist_participants:
-                self.heist_prison_until[p] = time.time() + 600
-                self._set_cooldown("heist", p, seconds=180)
-            await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for 10 minutes!")
+                self.heist_prison_until[p] = time.time() + prison_seconds
+                self._set_cooldown("heist", p, seconds=cooldown_seconds)
+            await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for {prison_minutes} minutes!")
             
         self.heist_participants.clear()
 
@@ -567,7 +573,10 @@ class SamothiusTwitchBot(commands.Bot):
         
         if self.boss_hp <= 0 and self.boss_state == "ACTIVE":
             self.boss_state = "DEFEATED"
-            reward = max(200, min(int(self.boss_max_hp * 0.6 / max(len(self.participants), 1)), 800))
+            reward_ratio = self.db.get_setting("boss_reward_ratio", 0.6)
+            reward_min = self.db.get_setting("boss_reward_min", 200)
+            reward_max = self.db.get_setting("boss_reward_max", 800)
+            reward = max(reward_min, min(int(self.boss_max_hp * reward_ratio / max(len(self.participants), 1)), reward_max))
             for p in self.participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
             await ctx.send(f"🎉 The {self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {SAMOBIT_EMOTE}")
@@ -582,8 +591,9 @@ class SamothiusTwitchBot(commands.Bot):
             return
             
         bal = self.db.get_balance_by_twitch_name(user)
-        if amount < GAMBLE_MIN_BET:
-            await ctx.send(f"  @{user}, minimum bet is {GAMBLE_MIN_BET} {SAMOBIT_EMOTE}")
+        min_bet = self.db.get_setting("gamble_min_bet", 10)
+        if amount < min_bet:
+            await ctx.send(f"  @{user}, minimum bet is {min_bet} {SAMOBIT_EMOTE}")
             return
         if amount > bal:
             await ctx.send(f"  @{user}, insufficient balance.")
@@ -592,16 +602,21 @@ class SamothiusTwitchBot(commands.Bot):
         self._set_cooldown("gamble", user)
         self.db.add_samobit_by_twitch_name(user, -amount)
         roll = random.random()
+
+        jackpot_chance = self.db.get_setting("gamble_jackpot_chance", 0.03)
+        jackpot_mult = self.db.get_setting("gamble_jackpot_multiplier", 4)
+        win_chance = self.db.get_setting("gamble_win_chance", 0.35)
+        win_mult = self.db.get_setting("gamble_win_multiplier", 1.8)
         
-        if roll < 0.03:
-            winnings = amount * 4
+        if roll < jackpot_chance:
+            winnings = int(amount * jackpot_mult)
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
                 f"  JACKPOT @{user}! Net +{winnings - amount} {SAMOBIT_EMOTE} "
                 f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
-        elif roll < 0.35:
-            winnings = int(amount * 1.8)
+        elif roll < win_chance:
+            winnings = int(amount * win_mult)
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
                 f"  @{user} won! Net +{amount} {SAMOBIT_EMOTE} "
@@ -633,10 +648,11 @@ class SamothiusTwitchBot(commands.Bot):
             return
             
         if not self.heist_lobby_active:
+            lobby_seconds = self.db.get_setting("heist_lobby_seconds", 60)
             self.heist_lobby_active = True
             self.heist_participants = {user}
             await ctx.send(
-                f"  Heist plan started! Type `!heist` within {HEIST_LOBBY_SECONDS}s to join. "
+                f"  Heist plan started! Type `!heist` within {lobby_seconds}s to join. "
                 f"First: @{user}"
             )
             self.loop.create_task(self._resolve_heist_lobby(chan))
@@ -662,10 +678,11 @@ class SamothiusTwitchBot(commands.Bot):
                 remaining_m = int(((86400 - diff.total_seconds()) % 3600) / 60)
                 await ctx.send(f"  @{user}, your next daily is in {remaining_h}h {remaining_m}m.")
                 return
-        self.db.add_samobit_by_twitch_name(user, 200)
+        reward = self.db.get_setting("daily_reward", 200)
+        self.db.add_samobit_by_twitch_name(user, reward)
         self.db.set_last_daily(user, now.isoformat())
         await ctx.send(
-            f"  ☀️ @{user} claimed their daily 200 {SAMOBIT_EMOTE}! "
+            f"  ☀️ @{user} claimed their daily {reward} {SAMOBIT_EMOTE}! "
             f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
         )
 
@@ -684,13 +701,17 @@ class SamothiusTwitchBot(commands.Bot):
         if remaining:
             await ctx.send(f"  @{user}, rob cooldown: {remaining}s.")
             return
+        min_target_balance = self.db.get_setting("rob_min_target_balance", 50)
         target_bal = self.db.get_balance_by_twitch_name(target)
-        if target_bal < 50:
-            await ctx.send(f"  @{user}, @{target} doesn't have enough {SAMOBIT_EMOTE} to rob (min 50).")
+        if target_bal < min_target_balance:
+            await ctx.send(f"  @{user}, @{target} doesn't have enough {SAMOBIT_EMOTE} to rob (min {min_target_balance}).")
             return
-        self._set_cooldown("rob", user, seconds=300)
-        steal = int(target_bal * 0.20)
-        if random.random() < 0.40:
+        cooldown_seconds = self.db.get_setting("rob_cooldown_seconds", 300)
+        self._set_cooldown("rob", user, seconds=cooldown_seconds)
+        steal_percent = self.db.get_setting("rob_steal_percent", 0.20)
+        success_chance = self.db.get_setting("rob_success_chance", 0.40)
+        steal = int(target_bal * steal_percent)
+        if random.random() < success_chance:
             self.db.add_samobit_by_twitch_name(target, -steal)
             self.db.add_samobit_by_twitch_name(user, steal)
             await ctx.send(
@@ -698,8 +719,11 @@ class SamothiusTwitchBot(commands.Bot):
                 f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
         else:
+            penalty_percent = self.db.get_setting("rob_penalty_percent", 0.15)
+            penalty_min = self.db.get_setting("rob_penalty_min", 50)
+            penalty_max = self.db.get_setting("rob_penalty_max", 1000)
             robber_balance = self.db.get_balance_by_twitch_name(user)
-            penalty = max(50, min(int(robber_balance * 0.15), 1000))
+            penalty = max(penalty_min, min(int(robber_balance * penalty_percent), penalty_max))
             actual_penalty = min(penalty, robber_balance)
             self.db.add_samobit_by_twitch_name(user, -actual_penalty)
             await ctx.send(
@@ -740,9 +764,10 @@ class SamothiusTwitchBot(commands.Bot):
             await ctx.send(f"  Reward for !first already given to @{self.first_claimer}.")
             return
         self.first_claimer = user
-        self.db.add_samobit_by_twitch_name(user, 500)
+        reward = self.db.get_setting("first_reward", 500)
+        self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
-            f"  🥇 @{user} was FIRST in chat today! +500 {SAMOBIT_EMOTE}! "
+            f"  🥇 @{user} was FIRST in chat today! +{reward} {SAMOBIT_EMOTE}! "
             f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
         )
 
@@ -765,27 +790,42 @@ class SamothiusTwitchBot(commands.Bot):
         has_personal = self.fish_buff_personal.get(user, 0) > now
         has_global = self.fish_buff_global_until > now
 
+        base_pool = self.db.get_setting("fish_rare_pool_base", 10.0)
+        personal_pool = self.db.get_setting("fish_rare_pool_personal_buff", 30.0)
+        global_pool = self.db.get_setting("fish_rare_pool_global_buff", 20.0)
+
         if has_personal:
-            rare_pool = 30.0
+            rare_pool = personal_pool
             buff_tag = " ✨[FISH BUFF]"
         elif has_global:
-            rare_pool = 20.0
+            rare_pool = global_pool
             buff_tag = " 🌊[GLOBAL BUFF]"
         else:
-            rare_pool = 10.0
+            rare_pool = base_pool
             buff_tag = ""
+
+        anchovy_min = self.db.get_setting("fish_anchovy_min", 100)
+        anchovy_max_reward = self.db.get_setting("fish_anchovy_max", 500)
+        seabream_min = self.db.get_setting("fish_seabream_min", 500)
+        seabream_max = self.db.get_setting("fish_seabream_max", 2000)
+        bluefish_min = self.db.get_setting("fish_bluefish_min", 2000)
+        bluefish_max = self.db.get_setting("fish_bluefish_max", 10000)
+        salmon_min = self.db.get_setting("fish_salmon_min", 10000)
+        salmon_max = self.db.get_setting("fish_salmon_max", 50000)
+        treasure_min = self.db.get_setting("fish_treasure_min", 20000)
+        treasure_max = self.db.get_setting("fish_treasure_max", 50000)
 
         anchovy_max = 100.0 - rare_pool
         if roll < anchovy_max:
-            tier, reward = "an Anchovy", random.randint(100, 500)
+            tier, reward = "an Anchovy", random.randint(anchovy_min, anchovy_max_reward)
         elif roll < anchovy_max + rare_pool * 0.65:
-            tier, reward = "a Sea Bream", random.randint(500, 2000)
+            tier, reward = "a Sea Bream", random.randint(seabream_min, seabream_max)
         elif roll < anchovy_max + rare_pool * 0.90:
-            tier, reward = "a Bluefish", random.randint(2000, 10000)
+            tier, reward = "a Bluefish", random.randint(bluefish_min, bluefish_max)
         elif roll < anchovy_max + rare_pool * 0.95:
-            tier, reward = "a Norwegian Salmon", random.randint(10000, 50000)
+            tier, reward = "a Norwegian Salmon", random.randint(salmon_min, salmon_max)
         else:
-            tier, reward = "a Treasure Chest!", random.randint(20000, 50000)
+            tier, reward = "a Treasure Chest!", random.randint(treasure_min, treasure_max)
 
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
