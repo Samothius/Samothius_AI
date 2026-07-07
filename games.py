@@ -346,6 +346,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.boss_state = "ACTIVE"
         self.current_boss = random.choice(["Dragon", "Goblin King", "Dark Knight"])
         self.boss_hp = random.randint(300, 1000)
+        self.boss_max_hp = self.boss_hp
         self.participants.clear()
         
         chan = self.get_channel(STREAMER_NAME)
@@ -376,14 +377,17 @@ class SamothiusTwitchBot(commands.Bot):
         roll = random.random() * 100
         
         if roll <= success_chance:
-            reward = random.randint(500, 1500) * crew_size
+            total_reward = random.randint(400, 900) * crew_size
+            reward_each = total_reward // crew_size
             for p in self.heist_participants:
-                self.db.add_samobit_by_twitch_name(p, reward)
-            await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {reward} {SAMOBIT_EMOTE} each!")
+                self.db.add_samobit_by_twitch_name(p, reward_each)
+                self._set_cooldown("heist", p, seconds=180)
+            await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {total_reward} {SAMOBIT_EMOTE}, split {reward_each} each!")
         else:
             for p in self.heist_participants:
-                self.heist_prison_until[p] = time.time() + 300 
-            await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for 5 minutes!")
+                self.heist_prison_until[p] = time.time() + 600
+                self._set_cooldown("heist", p, seconds=180)
+            await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for 10 minutes!")
             
         self.heist_participants.clear()
 
@@ -563,7 +567,7 @@ class SamothiusTwitchBot(commands.Bot):
         
         if self.boss_hp <= 0 and self.boss_state == "ACTIVE":
             self.boss_state = "DEFEATED"
-            reward = 500
+            reward = max(200, min(int(self.boss_max_hp * 0.6 / max(len(self.participants), 1)), 800))
             for p in self.participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
             await ctx.send(f"🎉 The {self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {SAMOBIT_EMOTE}")
@@ -589,15 +593,15 @@ class SamothiusTwitchBot(commands.Bot):
         self.db.add_samobit_by_twitch_name(user, -amount)
         roll = random.random()
         
-        if roll < 0.05:
-            winnings = amount * 5
+        if roll < 0.03:
+            winnings = amount * 4
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
                 f"  JACKPOT @{user}! Net +{winnings - amount} {SAMOBIT_EMOTE} "
                 f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
-        elif roll < 0.45:
-            winnings = amount * 2
+        elif roll < 0.35:
+            winnings = int(amount * 1.8)
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
                 f"  @{user} won! Net +{amount} {SAMOBIT_EMOTE} "
@@ -694,8 +698,9 @@ class SamothiusTwitchBot(commands.Bot):
                 f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
             )
         else:
-            penalty = 300
-            actual_penalty = min(penalty, self.db.get_balance_by_twitch_name(user))
+            robber_balance = self.db.get_balance_by_twitch_name(user)
+            penalty = max(50, min(int(robber_balance * 0.15), 1000))
+            actual_penalty = min(penalty, robber_balance)
             self.db.add_samobit_by_twitch_name(user, -actual_penalty)
             await ctx.send(
                 f"  🚨 @{user} got caught trying to rob @{target}! "
@@ -780,7 +785,7 @@ class SamothiusTwitchBot(commands.Bot):
         elif roll < anchovy_max + rare_pool * 0.95:
             tier, reward = "a Norwegian Salmon", random.randint(10000, 50000)
         else:
-            tier, reward = "a Treasure Chest!", random.randint(50000, 99999)
+            tier, reward = "a Treasure Chest!", random.randint(20000, 50000)
 
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
