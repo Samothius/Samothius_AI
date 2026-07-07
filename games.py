@@ -431,7 +431,7 @@ class SamothiusTwitchBot(commands.Bot):
             "Fish Buff":         ("fish_personal", 7200),   # 2 saat
             "Global Fish Buff":  ("fish_global",   1800),   # 30 dk
         }
-        token = EVENTSUB_TOKEN.lstrip("oauth:")
+        token = EVENTSUB_TOKEN.removeprefix("oauth:")
         broadcaster_id = await self._fetch_broadcaster_id()
         if not broadcaster_id:
             print("⚠️ Channel Points EventSub disabled: broadcaster ID alınamadı.")
