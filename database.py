@@ -40,10 +40,144 @@ class DatabaseManager:
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Table for Panel-managed bot settings (game balance values)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                value_type TEXT NOT NULL DEFAULT 'float',
+                category TEXT,
+                description TEXT
+            )
+        ''')
+
+        # Table for Panel-triggered live commands (boss spawn, games on/off, etc.)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_commands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                payload TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         self.conn.commit()
+        self._seed_default_settings()
 
     def close(self) -> None:
         self.conn.close()
+
+    # --- BOT SETTINGS (Panel-managed game balance) ---
+
+    DEFAULT_SETTINGS = [
+        # key, value, value_type, category, description
+        ("gamble_min_bet", "10", "int", "gamble", "Minimum bet amount"),
+        ("gamble_jackpot_chance", "0.03", "float", "gamble", "Chance of jackpot (0-1)"),
+        ("gamble_jackpot_multiplier", "4", "float", "gamble", "Jackpot payout multiplier"),
+        ("gamble_win_chance", "0.35", "float", "gamble", "Chance of normal win, cumulative with jackpot (0-1)"),
+        ("gamble_win_multiplier", "1.8", "float", "gamble", "Normal win payout multiplier"),
+
+        ("heist_lobby_seconds", "60", "int", "heist", "Seconds the heist lobby stays open"),
+        ("heist_reward_min", "400", "int", "heist", "Min reward per crew member on success"),
+        ("heist_reward_max", "900", "int", "heist", "Max reward per crew member on success"),
+        ("heist_cooldown_seconds", "180", "int", "heist", "Cooldown per user after a heist resolves"),
+        ("heist_prison_seconds", "600", "int", "heist", "Prison duration on heist failure"),
+
+        ("rob_success_chance", "0.40", "float", "rob", "Chance the rob succeeds (0-1)"),
+        ("rob_steal_percent", "0.20", "float", "rob", "Percent of target's balance stolen on success"),
+        ("rob_penalty_percent", "0.15", "float", "rob", "Percent of robber's own balance lost on failure"),
+        ("rob_penalty_min", "50", "int", "rob", "Minimum penalty on failure"),
+        ("rob_penalty_max", "1000", "int", "rob", "Maximum penalty on failure"),
+        ("rob_cooldown_seconds", "300", "int", "rob", "Cooldown per user after a rob attempt"),
+        ("rob_min_target_balance", "50", "int", "rob", "Minimum balance a target must have to be robbed"),
+
+        ("fish_anchovy_min", "100", "int", "fish", "Anchovy tier min reward"),
+        ("fish_anchovy_max", "500", "int", "fish", "Anchovy tier max reward"),
+        ("fish_seabream_min", "500", "int", "fish", "Sea Bream tier min reward"),
+        ("fish_seabream_max", "2000", "int", "fish", "Sea Bream tier max reward"),
+        ("fish_bluefish_min", "2000", "int", "fish", "Bluefish tier min reward"),
+        ("fish_bluefish_max", "10000", "int", "fish", "Bluefish tier max reward"),
+        ("fish_salmon_min", "10000", "int", "fish", "Norwegian Salmon tier min reward"),
+        ("fish_salmon_max", "50000", "int", "fish", "Norwegian Salmon tier max reward"),
+        ("fish_treasure_min", "20000", "int", "fish", "Treasure Chest tier min reward"),
+        ("fish_treasure_max", "50000", "int", "fish", "Treasure Chest tier max reward"),
+        ("fish_rare_pool_base", "10.0", "float", "fish", "Base % chance pool for rare tiers (no buff)"),
+        ("fish_rare_pool_personal_buff", "30.0", "float", "fish", "Rare pool % with personal Fish Buff"),
+        ("fish_rare_pool_global_buff", "20.0", "float", "fish", "Rare pool % with Global Fish Buff"),
+
+        ("boss_hp_min", "300", "int", "boss", "Minimum boss HP"),
+        ("boss_hp_max", "1000", "int", "boss", "Maximum boss HP"),
+        ("boss_reward_ratio", "0.6", "float", "boss", "Reward pool = boss_max_hp * this ratio, split among attackers"),
+        ("boss_reward_min", "200", "int", "boss", "Minimum reward per attacker"),
+        ("boss_reward_max", "800", "int", "boss", "Maximum reward per attacker"),
+
+        ("daily_reward", "200", "int", "economy", "Reward for !daily"),
+        ("first_reward", "500", "int", "economy", "Reward for !first"),
+
+        ("games_enabled", "true", "bool", "control", "Master on/off switch for game commands"),
+    ]
+
+    def _seed_default_settings(self) -> None:
+        cursor = self.conn.cursor()
+        for key, value, value_type, category, description in self.DEFAULT_SETTINGS:
+            cursor.execute(
+                "INSERT OR IGNORE INTO bot_settings (key, value, value_type, category, description) VALUES (?, ?, ?, ?, ?)",
+                (key, value, value_type, category, description),
+            )
+        self.conn.commit()
+
+    @staticmethod
+    def _cast_setting(value: str, value_type: str):
+        if value_type == "int":
+            return int(value)
+        if value_type == "float":
+            return float(value)
+        if value_type == "bool":
+            return value.lower() in ("true", "1", "yes")
+        return value
+
+    def get_setting(self, key: str, default=None):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT value, value_type FROM bot_settings WHERE key = ?", (key,))
+        result = cursor.fetchone()
+        if not result:
+            return default
+        value, value_type = result
+        return self._cast_setting(value, value_type)
+
+    def set_setting(self, key: str, value) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT value_type FROM bot_settings WHERE key = ?", (key,))
+        result = cursor.fetchone()
+        if not result:
+            return False
+        cursor.execute("UPDATE bot_settings SET value = ? WHERE key = ?", (str(value), key))
+        self.conn.commit()
+        return True
+
+    def get_all_settings(self) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT key, value, value_type, category, description FROM bot_settings ORDER BY category, key")
+        return cursor.fetchall()
+
+    # --- BOT COMMANDS (Panel-triggered live actions) ---
+
+    def create_command(self, command: str, payload: str = None) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO bot_commands (command, payload) VALUES (?, ?)", (command, payload))
+        self.conn.commit()
+
+    def get_pending_commands(self) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id, command, payload FROM bot_commands WHERE status = \'pending\' ORDER BY created_at ASC")
+        return cursor.fetchall()
+
+    def mark_command_done(self, command_id: int) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE bot_commands SET status = \'done\' WHERE id = ?", (command_id,))
+        self.conn.commit()
 
     # --- ECONOMY METHODS ---
 
