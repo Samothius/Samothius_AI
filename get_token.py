@@ -1,14 +1,14 @@
 """
-Tek seferlik kullanım: Twitch user access token üretir.
-Çalıştır: python get_token.py
-Tarayıcında açılan URL'yi onayla, token otomatik alınır.
+Twitch user access + refresh token üretir, otomatik .env'e yazar.
+Çalıştır: python3 get_token.py
+Tarayıcında açılan URL'yi onayla, tokenlar otomatik kaydedilir.
 """
 import asyncio
 import aiohttp
 from aiohttp import web
-import webbrowser
 import os
 from dotenv import load_dotenv
+from token_manager import _update_env_value
 
 load_dotenv()
 CLIENT_ID = os.getenv("TWITCH_CLIENT_ID", "")
@@ -28,7 +28,15 @@ async def handle_callback(request):
 async def main():
     global auth_code
 
-    # 1. Local server başlat
+    which = input("Bu token hangisi için? [tmi/eventsub]: ").strip().lower()
+    if which == "tmi":
+        token_key, refresh_key = "TMI_TOKEN", "TMI_REFRESH_TOKEN"
+    elif which == "eventsub":
+        token_key, refresh_key = "EVENTSUB_TOKEN", "EVENTSUB_REFRESH_TOKEN"
+    else:
+        print("❌ Geçersiz seçim, 'tmi' veya 'eventsub' yazmalısın.")
+        return
+
     app = web.Application()
     app.router.add_get("/", handle_callback)
     runner = web.AppRunner(app)
@@ -36,7 +44,6 @@ async def main():
     site = web.TCPSite(runner, "localhost", 3000)
     await site.start()
 
-    # 2. Auth URL aç
     auth_url = (
         f"https://id.twitch.tv/oauth2/authorize"
         f"?client_id={CLIENT_ID}"
@@ -46,14 +53,12 @@ async def main():
     )
     print(f"\n🌐 Şu URL'yi tarayıcında aç:\n{auth_url}\n")
 
-    # 3. Callback bekle
     print("⏳ Twitch onayı bekleniyor...")
     while auth_code is None:
         await asyncio.sleep(0.5)
 
     await runner.cleanup()
 
-    # 4. Code → Token
     async with aiohttp.ClientSession() as session:
         resp = await session.post(
             "https://id.twitch.tv/oauth2/token",
@@ -67,11 +72,13 @@ async def main():
         )
         data = await resp.json()
 
-    token = data.get("access_token")
-    if token:
-        print(f"\n✅ EVENTSUB_TOKEN={token}")
-        print("\n👉 Bu satırı .env dosyana ekle (ya da güncelle):")
-        print(f"EVENTSUB_TOKEN={token}")
+    access_token = data.get("access_token")
+    refresh_token = data.get("refresh_token")
+
+    if access_token and refresh_token:
+        _update_env_value(token_key, access_token)
+        _update_env_value(refresh_key, refresh_token)
+        print(f"\n✅ {token_key} ve {refresh_key} otomatik olarak .env dosyasına yazıldı!")
     else:
         print(f"❌ Token alınamadı: {data}")
 

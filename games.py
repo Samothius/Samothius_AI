@@ -58,21 +58,25 @@ from config import (
     TWITCH_CLIENT_ID,
     TWITCH_CLIENT_SECRET,
     EVENTSUB_TOKEN,
+    TMI_REFRESH_TOKEN,
+    EVENTSUB_REFRESH_TOKEN,
     STREAMER_NAME,
     CHAT_OVERLAY_WS_PORT,
     SAMOBIT_EMOTE
 )
 from database import DatabaseManager
+from token_manager import ensure_valid_token, ensure_valid_token_async
 from typing import Optional
 
 class SamothiusTwitchBot(commands.Bot):
-    def __init__(self):
+    def __init__(self, tmi_token=None, eventsub_token=None):
         super().__init__(
-            token=TMI_TOKEN,
+            token=tmi_token or TMI_TOKEN,
             client_id=TWITCH_CLIENT_ID,
             prefix="!",
             initial_channels=[STREAMER_NAME]
         )
+        self.eventsub_token = eventsub_token or EVENTSUB_TOKEN
         self.db = DatabaseManager()
         
         # Cooldown Memory
@@ -115,6 +119,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.gift_samobit_loop.start()
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
+        self.token_refresh_loop.start()
         t = threading.Thread(target=self._start_ws_server_thread, daemon=True)
         t.start()
         self.loop.create_task(self._channel_points_eventsub())
@@ -338,6 +343,15 @@ class SamothiusTwitchBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Error in chat_engagement_loop: {e}")
 
+    @routines.routine(hours=3)
+    async def token_refresh_loop(self):
+        try:
+            await ensure_valid_token_async("TMI_TOKEN", "TMI_REFRESH_TOKEN", TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
+            fresh_eventsub = await ensure_valid_token_async("EVENTSUB_TOKEN", "EVENTSUB_REFRESH_TOKEN", TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
+            self.eventsub_token = fresh_eventsub
+        except Exception as e:
+            print(f"⚠️ Error in token_refresh_loop: {e}")
+
     # --- EVENT LOGIC ---
     async def spawn_boss_logic(self, manual=False):
         self.boss_state = "ACTIVE"
@@ -441,7 +455,6 @@ class SamothiusTwitchBot(commands.Bot):
             "Fish Buff":         ("fish_personal", 7200),   # 2 saat
             "Global Fish Buff":  ("fish_global",   1800),   # 30 dk
         }
-        token = EVENTSUB_TOKEN.removeprefix("oauth:")
         broadcaster_id = await self._fetch_broadcaster_id()
         if not broadcaster_id:
             print("⚠️ Channel Points EventSub disabled: broadcaster ID alınamadı.")
@@ -449,6 +462,7 @@ class SamothiusTwitchBot(commands.Bot):
 
         while True:
             try:
+                token = self.eventsub_token.removeprefix("oauth:")
                 async with websockets.connect(EVENTSUB_WS) as ws:
                     raw = await ws.recv()
                     msg = json.loads(raw)
@@ -834,5 +848,8 @@ class SamothiusTwitchBot(commands.Bot):
         )
 
 if __name__ == "__main__":
-    bot = SamothiusTwitchBot()
+    fresh_tmi_token = ensure_valid_token("TMI_TOKEN", "TMI_REFRESH_TOKEN", TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
+    fresh_eventsub_token = ensure_valid_token("EVENTSUB_TOKEN", "EVENTSUB_REFRESH_TOKEN", TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET)
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    bot = SamothiusTwitchBot(tmi_token=fresh_tmi_token, eventsub_token=fresh_eventsub_token)
     bot.run()

@@ -28,3 +28,5 @@ STREAM_CHECK_INTERVAL_MINUTES = _to_int(os.getenv("STREAM_CHECK_INTERVAL_MINUTES
 
 # Chat Overlay (WebSocket bridge from games.py -> browser source)
 CHAT_OVERLAY_WS_PORT = _to_int(os.getenv("CHAT_OVERLAY_WS_PORT", "8765"), 8765)
+TMI_REFRESH_TOKEN = os.getenv("TMI_REFRESH_TOKEN", "")
+EVENTSUB_REFRESH_TOKEN = os.getenv("EVENTSUB_REFRESH_TOKEN", "")
