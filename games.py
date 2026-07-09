@@ -608,6 +608,7 @@ class SamothiusTwitchBot(commands.Bot):
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
+        self.db.increment_command_usage("attack")
         if self.boss_state != "ACTIVE":
             await ctx.send(f"  @{user}, there is no active boss to attack right now.")
             return
@@ -640,6 +641,7 @@ class SamothiusTwitchBot(commands.Bot):
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
+        self.db.increment_command_usage("gamble")
         remaining = self._get_remaining_cooldown("gamble", user)
         if remaining:
             await ctx.send(f"  @{user}, try again in {remaining} seconds.")
@@ -689,6 +691,7 @@ class SamothiusTwitchBot(commands.Bot):
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
+        self.db.increment_command_usage("heist")
         prison_until = self.heist_prison_until.get(user, 0)
         
         if prison_until > time.time():
@@ -736,6 +739,7 @@ class SamothiusTwitchBot(commands.Bot):
                 remaining_m = int(((86400 - diff.total_seconds()) % 3600) / 60)
                 await ctx.send(f"  @{user}, your next daily is in {remaining_h}h {remaining_m}m.")
                 return
+        self.db.increment_command_usage("daily")
         reward = self.db.get_setting("daily_reward", 200)
         self.db.add_samobit_by_twitch_name(user, reward)
         self.db.set_last_daily(user, now.isoformat())
@@ -750,6 +754,7 @@ class SamothiusTwitchBot(commands.Bot):
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
+        self.db.increment_command_usage("rob")
         parts = ctx.message.content.split()
         if len(parts) < 2:
             await ctx.send(f"  @{user}, usage: !rob @target")
@@ -795,6 +800,7 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="gift")
     async def gift(self, ctx):
         user = ctx.author.name.lower()
+        self.db.increment_command_usage("gift")
         parts = ctx.message.content.split()
         if len(parts) < 3:
             await ctx.send(f"  @{user}, usage: !gift @target <amount>")
@@ -825,6 +831,7 @@ class SamothiusTwitchBot(commands.Bot):
             await ctx.send(f"  Reward for !first already given to @{self.first_claimer}.")
             return
         self.first_claimer = user
+        self.db.increment_command_usage("first")
         reward = self.db.get_setting("first_reward", 500)
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
@@ -838,6 +845,7 @@ class SamothiusTwitchBot(commands.Bot):
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
+        self.db.increment_command_usage("fish")
 
         if not self.fish_window_active:
             await ctx.send(f"  @{user}, 🎣 Watch the overlay for the fishing icon — type !fish then!")

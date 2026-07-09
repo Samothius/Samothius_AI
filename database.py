@@ -63,6 +63,13 @@ class DatabaseManager:
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS command_usage (
+                command TEXT PRIMARY KEY,
+                count INTEGER DEFAULT 0
+            )
+        ''')
+
         self.conn.commit()
         self._seed_default_settings()
 
@@ -177,6 +184,29 @@ class DatabaseManager:
     def mark_command_done(self, command_id: int) -> None:
         cursor = self.conn.cursor()
         cursor.execute("UPDATE bot_commands SET status = \'done\' WHERE id = ?", (command_id,))
+        self.conn.commit()
+
+    # --- COMMAND USAGE STATS (daily "most played game") ---
+
+    def increment_command_usage(self, command: str) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO command_usage (command, count) VALUES (?, 1)
+            ON CONFLICT(command) DO UPDATE SET count = count + 1
+            ''',
+            (command,)
+        )
+        self.conn.commit()
+
+    def get_command_usage_stats(self) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT command, count FROM command_usage ORDER BY count DESC")
+        return cursor.fetchall()
+
+    def reset_command_usage(self) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM command_usage")
         self.conn.commit()
 
     # --- ECONOMY METHODS ---

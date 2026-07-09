@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import asyncio
 import datetime
 import time
+import subprocess
 
 from config import DISCORD_TOKEN, STREAM_NOTIFICATION_ROLE_ID, SAMOBIT_EMOJI
 from database import DatabaseManager
@@ -58,6 +59,17 @@ class SamothiusBot(commands.Bot):
         self.daily_errors += 1
         print(f"⚠️ Command Error: {error}")
 
+    @staticmethod
+    def _get_service_status(service_name: str) -> str:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", service_name],
+                capture_output=True, text=True, timeout=5
+            )
+            return "🟢 Active" if result.stdout.strip() == "active" else "🔴 Down"
+        except Exception:
+            return "⚠️ Unknown"
+
     async def run_daily_report(self):
         # 1: SYSTEM HEALTH REPORT 
         try:
@@ -74,27 +86,48 @@ class SamothiusBot(commands.Bot):
             total_users = self.db.get_total_users()
             total_volume = self.db.get_total_samobit_volume()
 
+            twitch_status = self._get_service_status("samothius-twitch")
+            web_status = self._get_service_status("samothius-web")
+            panel_status = self._get_service_status("samothius-panel")
+
+            usage_stats = self.db.get_command_usage_stats()
+            if usage_stats:
+                top_games_lines = []
+                medals = ["🥇", "🥈", "🥉"]
+                for i, (command, count) in enumerate(usage_stats[:5]):
+                    medal = medals[i] if i < 3 else f"`{i+1}.`"
+                    top_games_lines.append(f"{medal} !{command} — {count}x")
+                top_games_text = "\n".join(top_games_lines)
+            else:
+                top_games_text = "No game activity recorded today."
+
             status_embed = discord.Embed(
                 title="🛠️ Samothius AI - Daily System Status",
                 color=0x2ECC71, 
                 timestamp=discord.utils.utcnow()
             )
-            status_embed.add_field(name="⏱️ Bot Uptime", value=f"`{uptime_str}`", inline=True)
+            status_embed.add_field(name="⏱️ Discord Bot Uptime", value=f"`{uptime_str}`", inline=True)
             status_embed.add_field(name="📡 API Ping", value=f"`{round(self.latency * 1000)}ms`", inline=True)
+            status_embed.add_field(name="🤖 Discord Bot", value="🟢 Active (this bot)", inline=True)
+            status_embed.add_field(name="🎮 Twitch Bot", value=twitch_status, inline=True)
+            status_embed.add_field(name="🖥️ Web Overlay", value=web_status, inline=True)
+            status_embed.add_field(name="🎛️ Admin Panel", value=panel_status, inline=True)
             status_embed.add_field(name="👥 Total Economy", value=f"{total_users} Users\n{total_volume} SamoBits {SAMOBIT_EMOJI}", inline=False)
-            status_embed.add_field(name="⚙️ Daily Stats", value=f"Commands Run: `{self.daily_commands_run}`\nErrors Caught: `{self.daily_errors}`", inline=False)
+            status_embed.add_field(name="🎮 Most Played Games Today", value=top_games_text, inline=False)
+            status_embed.add_field(name="⚙️ Discord Bot Stats", value=f"Commands Run: `{self.daily_commands_run}`\nErrors Caught: `{self.daily_errors}`", inline=False)
             
             await log_thread.send(embed=status_embed)
             
             self.daily_commands_run = 0
             self.daily_errors = 0
+            self.db.reset_command_usage()
 
         except Exception as e:
             print(f"⚠️ Failed to send System Status: {e}")
 
         # 2: DAILY TOP 50 LEADERBOARD
         try:
-            LEADERBOARD_CHANNEL_ID = 1517832900794388551
+            LEADERBOARD_CHANNEL_ID = 1524631460827369573
             
             lb_channel = self.get_channel(LEADERBOARD_CHANNEL_ID)
             if not lb_channel:
