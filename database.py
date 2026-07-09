@@ -309,6 +309,28 @@ class DatabaseManager:
         )
         return cursor.fetchall()
 
+    def search_users(self, query: str, limit: int = 20) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT twitch_name, samobit_balance FROM users WHERE twitch_name LIKE ? ORDER BY samobit_balance DESC LIMIT ?",
+            (f"%{query.lower()}%", limit)
+        )
+        return cursor.fetchall()
+
+    def set_balance(self, twitch_name: str, new_balance: int) -> None:
+        cursor = self.conn.cursor()
+        twitch_name = twitch_name.lower()
+        cursor.execute(
+            """
+            INSERT INTO users (twitch_name, samobit_balance)
+            VALUES (?, ?)
+            ON CONFLICT(twitch_name)
+            DO UPDATE SET samobit_balance = ?
+            """,
+            (twitch_name, new_balance, new_balance),
+        )
+        self.conn.commit()
+
     # --- STREAM EVENTS (CREDITS) METHODS ---
     
     def log_event(self, event_type: str, username: str, amount: int = 1) -> None:

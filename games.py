@@ -120,6 +120,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
         self.token_refresh_loop.start()
+        self.bot_commands_poll_loop.start()
         t = threading.Thread(target=self._start_ws_server_thread, daemon=True)
         t.start()
         self.loop.create_task(self._channel_points_eventsub())
@@ -297,6 +298,9 @@ class SamothiusTwitchBot(commands.Bot):
         remaining = int(end_time - time.time())
         return remaining if remaining > 0 else 0
 
+    def _games_enabled(self) -> bool:
+        return self.db.get_setting("games_enabled", True)
+
     # --- BACKGROUND LOOPS WITH ERROR PROTECTION ---
     @routines.routine(minutes=5)
     async def gift_samobit_loop(self):
@@ -352,8 +356,25 @@ class SamothiusTwitchBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Error in token_refresh_loop: {e}")
 
+    @routines.routine(seconds=10)
+    async def bot_commands_poll_loop(self):
+        try:
+            pending = self.db.get_pending_commands()
+            for cmd_id, command, payload in pending:
+                if command == "spawn_boss" and self.boss_state == "IDLE":
+                    await self.spawn_boss_logic(manual=True)
+                elif command == "games_on":
+                    self.db.set_setting("games_enabled", "true")
+                elif command == "games_off":
+                    self.db.set_setting("games_enabled", "false")
+                self.db.mark_command_done(cmd_id)
+        except Exception as e:
+            print(f"⚠️ Error in bot_commands_poll_loop: {e}")
+
     # --- EVENT LOGIC ---
     async def spawn_boss_logic(self, manual=False):
+        if not manual and not self._games_enabled():
+            return
         self.boss_state = "ACTIVE"
         self.current_boss = random.choice(["Dragon", "Goblin King", "Dark Knight"])
         hp_min = self.db.get_setting("boss_hp_min", 300)
@@ -537,6 +558,20 @@ class SamothiusTwitchBot(commands.Bot):
                 await asyncio.sleep(30)
 
     # --- TWITCH COMMANDS ---
+    @commands.command(name="games")
+    async def games_toggle(self, ctx, state: str = None):
+        user = ctx.author.name.lower()
+        if not (ctx.author.is_mod or user == STREAMER_NAME.lower()):
+            await ctx.send(f"  @{user}, only moderators can use this command.")
+            return
+        if state is None or state.lower() not in ("on", "off"):
+            current = self._games_enabled()
+            await ctx.send(f"  Games are currently {'ON' if current else 'OFF'}. Usage: !games on|off")
+            return
+        enabled = state.lower() == "on"
+        self.db.set_setting("games_enabled", "true" if enabled else "false")
+        await ctx.send(f"  🎮 Games have been turned {'ON' if enabled else 'OFF'} by @{user}.")
+
     @commands.command(name="samobit")
     async def samobit(self, ctx):
         user = ctx.author.name.lower()
@@ -570,6 +605,9 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="attack")
     async def attack(self, ctx):
         user = ctx.author.name.lower()
+        if not self._games_enabled():
+            await ctx.send(f"  @{user}, games are currently disabled.")
+            return
         if self.boss_state != "ACTIVE":
             await ctx.send(f"  @{user}, there is no active boss to attack right now.")
             return
@@ -599,6 +637,9 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="gamble")
     async def gamble(self, ctx, amount: int):
         user = ctx.author.name.lower()
+        if not self._games_enabled():
+            await ctx.send(f"  @{user}, games are currently disabled.")
+            return
         remaining = self._get_remaining_cooldown("gamble", user)
         if remaining:
             await ctx.send(f"  @{user}, try again in {remaining} seconds.")
@@ -645,6 +686,9 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="heist")
     async def heist(self, ctx):
         user = ctx.author.name.lower()
+        if not self._games_enabled():
+            await ctx.send(f"  @{user}, games are currently disabled.")
+            return
         prison_until = self.heist_prison_until.get(user, 0)
         
         if prison_until > time.time():
@@ -703,6 +747,9 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="rob")
     async def rob(self, ctx):
         user = ctx.author.name.lower()
+        if not self._games_enabled():
+            await ctx.send(f"  @{user}, games are currently disabled.")
+            return
         parts = ctx.message.content.split()
         if len(parts) < 2:
             await ctx.send(f"  @{user}, usage: !rob @target")
@@ -788,6 +835,9 @@ class SamothiusTwitchBot(commands.Bot):
     @commands.command(name="fish")
     async def fish(self, ctx):
         user = ctx.author.name.lower()
+        if not self._games_enabled():
+            await ctx.send(f"  @{user}, games are currently disabled.")
+            return
 
         if not self.fish_window_active:
             await ctx.send(f"  @{user}, 🎣 Watch the overlay for the fishing icon — type !fish then!")
