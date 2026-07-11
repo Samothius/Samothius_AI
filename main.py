@@ -8,6 +8,9 @@ import subprocess
 from config import DISCORD_TOKEN, STREAM_NOTIFICATION_ROLE_ID, SAMOBIT_EMOJI
 from database import DatabaseManager
 from twitch_api import TwitchApiClient
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from youtube_token_manager import YouTubeAuthManager
 
 class NotificationView(discord.ui.View):
     def __init__(self):
@@ -33,11 +36,13 @@ class SamothiusBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.db = DatabaseManager()
         self.twitch_api = TwitchApiClient()
+        self.youtube_auth = YouTubeAuthManager()
         
         self.start_time = discord.utils.utcnow()
         self.daily_commands_run = 0             
         self.daily_errors = 0                   
         self.is_live = False
+        self.is_live_youtube = False
 
     async def setup_hook(self):
         self.add_view(NotificationView())
@@ -49,6 +54,9 @@ class SamothiusBot(commands.Bot):
             
         if not self.stream_announcement_loop.is_running():
             self.stream_announcement_loop.start()
+
+        if not self.youtube_announcement_loop.is_running():
+            self.youtube_announcement_loop.start()
 
     async def on_command_completion(self, ctx):
         self.daily_commands_run += 1
@@ -195,7 +203,6 @@ class SamothiusBot(commands.Bot):
                         
                         embed.description = (
                             "<:twitch:1493106317491962056> [twitch.tv](https://twitch.tv/samothius)   \n"
-                            "<:kick:1498832104568655912> [kick.com](https://kick.com/samothius)   \n"
                             "<:youtube:1498832107034644580> [youtube.com](https://youtube.com/samothius)"
                         )
                         
@@ -213,6 +220,55 @@ class SamothiusBot(commands.Bot):
                 
         except Exception as e:
             print(f"⚠️ Stream announcement error: {e}")
+
+    @tasks.loop(minutes=3)
+    async def youtube_announcement_loop(self):
+        await self.wait_until_ready()
+        try:
+            token = await self.youtube_auth.get_access_token()
+            creds = Credentials(token=token)
+            youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+            data = await asyncio.to_thread(
+                youtube.liveBroadcasts()
+                .list(part="snippet", broadcastStatus="active", broadcastType="all")
+                .execute
+            )
+            items = data.get("items", [])
+
+            if items:
+                if not self.is_live_youtube:
+                    self.is_live_youtube = True
+
+                    ANNOUNCEMENT_CHANNEL_ID = 1498468679879229570
+                    channel = self.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                    if not channel:
+                        channel = await self.fetch_channel(ANNOUNCEMENT_CHANNEL_ID)
+
+                    if channel:
+                        title = items[0]["snippet"].get("title", "Samothius is LIVE!")
+
+                        embed = discord.Embed(
+                            title="🔴 Samothius is now LIVE on YouTube!",
+                            color=0xFF0000,
+                            timestamp=discord.utils.utcnow()
+                        )
+                        embed.description = (
+                            "<:twitch:1493106317491962056> [twitch.tv](https://twitch.tv/samothius)   \n"
+                            "<:youtube:1498832107034644580> [youtube.com](https://youtube.com/samothius)"
+                        )
+                        embed.add_field(name="📝 Stream Title", value=title, inline=False)
+                        embed.set_image(url="https://imgur.com/OneI0C5.jpg")
+
+                        ping_text = f"<@&{STREAM_NOTIFICATION_ROLE_ID}>"
+                        view = NotificationView()
+
+                        await channel.send(content=ping_text, embed=embed, view=view)
+                        print("📢 YouTube stream announcement sent!")
+            else:
+                self.is_live_youtube = False
+
+        except Exception as e:
+            print(f"⚠️ YouTube announcement error: {e}")
 
     time_to_run = datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc)
     @tasks.loop(time=time_to_run)
@@ -266,7 +322,6 @@ async def test_announcement(ctx):
         
         embed.description = (
             "<:twitch:1493106317491962056> [twitch.tv](https://twitch.tv/samothius)   \n"
-            "<:kick:1498832104568655912> [kick.com](https://kick.com/samothius)   \n"
             "<:youtube:1498832107034644580> [youtube.com](https://youtube.com/samothius)"
         )
         
