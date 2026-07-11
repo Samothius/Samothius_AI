@@ -30,6 +30,31 @@ class DatabaseManager:
             """
         )
         
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN youtube_channel_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_youtube_channel_id "
+            "ON users(youtube_channel_id)"
+        )
+
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_daily_youtube TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN youtube_channel_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_daily_youtube TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        
         # New Table for Stream Events (Credits Screen)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS stream_events (
@@ -360,6 +385,162 @@ class DatabaseManager:
             (twitch_name, new_balance, new_balance),
         )
         self.conn.commit()
+
+    # --- YOUTUBE ECONOMY METHODS (mirrors Twitch methods, separate balances) ---
+
+    def get_balance_by_youtube_id(self, channel_id: str) -> int:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT samobit_balance FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        result = cursor.fetchone()
+        return result[0] if result else 0
+
+    def add_samobit_by_youtube_id(self, channel_id: str, amount: int) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO users (youtube_channel_id, samobit_balance)
+            VALUES (?, ?)
+            ON CONFLICT(youtube_channel_id)
+            DO UPDATE SET samobit_balance = samobit_balance + ?
+            """,
+            (channel_id, amount, amount),
+        )
+        self.conn.commit()
+
+    def user_exists_by_youtube_id(self, channel_id: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        return cursor.fetchone() is not None
+
+    def get_last_daily_youtube(self, channel_id: str) -> Optional[str]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT last_daily_youtube FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        result = cursor.fetchone()
+        return result[0] if result else None
+
+    def set_last_daily_youtube(self, channel_id: str, timestamp: str) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO users (youtube_channel_id, last_daily_youtube)
+            VALUES (?, ?)
+            ON CONFLICT(youtube_channel_id)
+            DO UPDATE SET last_daily_youtube = ?
+            """,
+            (channel_id, timestamp, timestamp),
+        )
+        self.conn.commit()
+
+    # --- GENERIC PLATFORM DISPATCH (used by shared economy_commands.py) ---
+
+    def get_balance(self, platform: str, user_id: str) -> int:
+        if platform == "youtube":
+            return self.get_balance_by_youtube_id(user_id)
+        return self.get_balance_by_twitch_name(user_id)
+
+    def add_balance(self, platform: str, user_id: str, amount: int) -> None:
+        if platform == "youtube":
+            self.add_samobit_by_youtube_id(user_id, amount)
+        else:
+            self.add_samobit_by_twitch_name(user_id, amount)
+
+    def get_last_daily_generic(self, platform: str, user_id: str) -> Optional[str]:
+        if platform == "youtube":
+            return self.get_last_daily_youtube(user_id)
+        return self.get_last_daily(user_id)
+
+    def set_last_daily_generic(self, platform: str, user_id: str, timestamp: str) -> None:
+        if platform == "youtube":
+            self.set_last_daily_youtube(user_id, timestamp)
+        else:
+            self.set_last_daily(user_id, timestamp)
+
+    # --- YOUTUBE ECONOMY METHODS (mirrors Twitch methods, separate balances) ---
+
+    def get_balance_by_youtube_id(self, channel_id: str) -> int:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT samobit_balance FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        result = cursor.fetchone()
+        return result[0] if result else 0
+
+    def add_samobit_by_youtube_id(self, channel_id: str, amount: int) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO users (youtube_channel_id, samobit_balance)
+            VALUES (?, ?)
+            ON CONFLICT(youtube_channel_id)
+            DO UPDATE SET samobit_balance = samobit_balance + ?
+            """,
+            (channel_id, amount, amount),
+        )
+        self.conn.commit()
+
+    def user_exists_by_youtube_id(self, channel_id: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        return cursor.fetchone() is not None
+
+    def get_last_daily_youtube(self, channel_id: str) -> Optional[str]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT last_daily_youtube FROM users WHERE youtube_channel_id = ?",
+            (channel_id,),
+        )
+        result = cursor.fetchone()
+        return result[0] if result else None
+
+    def set_last_daily_youtube(self, channel_id: str, timestamp: str) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO users (youtube_channel_id, last_daily_youtube)
+            VALUES (?, ?)
+            ON CONFLICT(youtube_channel_id)
+            DO UPDATE SET last_daily_youtube = ?
+            """,
+            (channel_id, timestamp, timestamp),
+        )
+        self.conn.commit()
+
+    # --- GENERIC PLATFORM DISPATCH (used by shared economy_commands.py) ---
+
+    def get_balance(self, platform: str, user_id: str) -> int:
+        if platform == "youtube":
+            return self.get_balance_by_youtube_id(user_id)
+        return self.get_balance_by_twitch_name(user_id)
+
+    def add_balance(self, platform: str, user_id: str, amount: int) -> None:
+        if platform == "youtube":
+            self.add_samobit_by_youtube_id(user_id, amount)
+        else:
+            self.add_samobit_by_twitch_name(user_id, amount)
+
+    def get_last_daily_generic(self, platform: str, user_id: str) -> Optional[str]:
+        if platform == "youtube":
+            return self.get_last_daily_youtube(user_id)
+        return self.get_last_daily(user_id)
+
+    def set_last_daily_generic(self, platform: str, user_id: str, timestamp: str) -> None:
+        if platform == "youtube":
+            self.set_last_daily_youtube(user_id, timestamp)
+        else:
+            self.set_last_daily(user_id, timestamp)
 
     # --- STREAM EVENTS (CREDITS) METHODS ---
     
