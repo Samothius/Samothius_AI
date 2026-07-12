@@ -120,7 +120,7 @@ class SamothiusTwitchBot(commands.Bot):
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
         self.token_refresh_loop.start()
-        self.bot_commands_poll_loop.start()
+        self.loop.create_task(self._bot_commands_poll_manual())
         t = threading.Thread(target=self._start_ws_server_thread, daemon=True)
         t.start()
         self.loop.create_task(self._channel_points_eventsub())
@@ -356,20 +356,21 @@ class SamothiusTwitchBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Error in token_refresh_loop: {e}")
 
-    @routines.routine(seconds=10)
-    async def bot_commands_poll_loop(self):
-        try:
-            pending = self.db.get_pending_commands()
-            for cmd_id, command, payload in pending:
-                if command == "spawn_boss" and self.boss_state == "IDLE":
-                    await self.spawn_boss_logic(manual=True)
-                elif command == "games_on":
-                    self.db.set_setting("games_enabled", "true")
-                elif command == "games_off":
-                    self.db.set_setting("games_enabled", "false")
-                self.db.mark_command_done(cmd_id)
-        except Exception as e:
-            print(f"⚠️ Error in bot_commands_poll_loop: {e}")
+    async def _bot_commands_poll_manual(self):
+        while True:
+            try:
+                pending = self.db.get_pending_commands()
+                for cmd_id, command, payload in pending:
+                    if command == "spawn_boss" and self.boss_state == "IDLE":
+                        await self.spawn_boss_logic(manual=True)
+                    elif command == "games_on":
+                        self.db.set_setting("games_enabled", "true")
+                    elif command == "games_off":
+                        self.db.set_setting("games_enabled", "false")
+                    self.db.mark_command_done(cmd_id)
+            except Exception as e:
+                print(f"⚠️ Error in bot_commands_poll_loop: {e}")
+            await asyncio.sleep(10)
 
     # --- EVENT LOGIC ---
     async def spawn_boss_logic(self, manual=False):
