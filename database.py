@@ -54,7 +54,25 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE users ADD COLUMN last_daily_youtube TEXT")
         except sqlite3.OperationalError:
             pass  # column already exists
-        
+
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_blacklisted INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+        # Migrate legacy hardcoded bot accounts into the blacklist (one-time, idempotent)
+        legacy_bot_names = ("samothius_ai", "streamelements", "fossabot", "nightbot", "moobot", "streamlabs")
+        for name in legacy_bot_names:
+            cursor.execute(
+                """
+                INSERT INTO users (twitch_name, is_blacklisted)
+                VALUES (?, 1)
+                ON CONFLICT(twitch_name)
+                DO UPDATE SET is_blacklisted = 1
+                """,
+                (name,),
+            )
+
         # New Table for Stream Events (Credits Screen)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS stream_events (
@@ -255,8 +273,10 @@ class DatabaseManager:
         return result[0] if result else 0
 
     def add_samobit_by_twitch_name(self, twitch_name: str, amount: int) -> None:
-        cursor = self.conn.cursor()
         twitch_name = twitch_name.lower()
+        if self.is_user_blacklisted(twitch_name):
+            return
+        cursor = self.conn.cursor()
         cursor.execute(
             """
             INSERT INTO users (twitch_name, samobit_balance)
@@ -344,33 +364,48 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    BLACKLISTED_USERS = {
-    "samothius_ai",
-    "streamelements",
-    "fossabot",
-    "nightbot",
-    "moobot",
-    "streamlabs",
-    }
-
     def get_top_richest_users(self, limit: int = 10) -> list:
         cursor = self.conn.cursor()
-        placeholders = ",".join("?" * len(self.BLACKLISTED_USERS))
         cursor.execute(
-            f"SELECT twitch_name, samobit_balance FROM users "
-            f"WHERE twitch_name NOT IN ({placeholders}) "
-            f"ORDER BY samobit_balance DESC LIMIT ?",
-            (*self.BLACKLISTED_USERS, limit)
+            "SELECT twitch_name, samobit_balance FROM users "
+            "WHERE (is_blacklisted IS NULL OR is_blacklisted = 0) AND twitch_name IS NOT NULL "
+            "ORDER BY samobit_balance DESC LIMIT ?",
+            (limit,)
         )
         return cursor.fetchall()
 
     def search_users(self, query: str, limit: int = 20) -> list:
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT twitch_name, samobit_balance FROM users WHERE twitch_name LIKE ? ORDER BY samobit_balance DESC LIMIT ?",
+            "SELECT twitch_name, samobit_balance FROM users "
+            "WHERE twitch_name LIKE ? AND twitch_name IS NOT NULL "
+            "ORDER BY samobit_balance DESC LIMIT ?",
             (f"%{query.lower()}%", limit)
         )
         return cursor.fetchall()
+
+    def set_blacklisted(self, twitch_name: str, blacklisted: bool = True) -> None:
+        cursor = self.conn.cursor()
+        twitch_name = twitch_name.lower()
+        cursor.execute(
+            """
+            INSERT INTO users (twitch_name, is_blacklisted)
+            VALUES (?, ?)
+            ON CONFLICT(twitch_name)
+            DO UPDATE SET is_blacklisted = ?
+            """,
+            (twitch_name, int(blacklisted), int(blacklisted)),
+        )
+        self.conn.commit()
+
+    def is_user_blacklisted(self, twitch_name: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT is_blacklisted FROM users WHERE twitch_name = ?",
+            (twitch_name.lower(),),
+        )
+        result = cursor.fetchone()
+        return bool(result[0]) if result else False
 
     def set_balance(self, twitch_name: str, new_balance: int) -> None:
         cursor = self.conn.cursor()
@@ -385,84 +420,6 @@ class DatabaseManager:
             (twitch_name, new_balance, new_balance),
         )
         self.conn.commit()
-
-    # --- YOUTUBE ECONOMY METHODS (mirrors Twitch methods, separate balances) ---
-
-    def get_balance_by_youtube_id(self, channel_id: str) -> int:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT samobit_balance FROM users WHERE youtube_channel_id = ?",
-            (channel_id,),
-        )
-        result = cursor.fetchone()
-        return result[0] if result else 0
-
-    def add_samobit_by_youtube_id(self, channel_id: str, amount: int) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO users (youtube_channel_id, samobit_balance)
-            VALUES (?, ?)
-            ON CONFLICT(youtube_channel_id)
-            DO UPDATE SET samobit_balance = samobit_balance + ?
-            """,
-            (channel_id, amount, amount),
-        )
-        self.conn.commit()
-
-    def user_exists_by_youtube_id(self, channel_id: str) -> bool:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT 1 FROM users WHERE youtube_channel_id = ?",
-            (channel_id,),
-        )
-        return cursor.fetchone() is not None
-
-    def get_last_daily_youtube(self, channel_id: str) -> Optional[str]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT last_daily_youtube FROM users WHERE youtube_channel_id = ?",
-            (channel_id,),
-        )
-        result = cursor.fetchone()
-        return result[0] if result else None
-
-    def set_last_daily_youtube(self, channel_id: str, timestamp: str) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO users (youtube_channel_id, last_daily_youtube)
-            VALUES (?, ?)
-            ON CONFLICT(youtube_channel_id)
-            DO UPDATE SET last_daily_youtube = ?
-            """,
-            (channel_id, timestamp, timestamp),
-        )
-        self.conn.commit()
-
-    # --- GENERIC PLATFORM DISPATCH (used by shared economy_commands.py) ---
-
-    def get_balance(self, platform: str, user_id: str) -> int:
-        if platform == "youtube":
-            return self.get_balance_by_youtube_id(user_id)
-        return self.get_balance_by_twitch_name(user_id)
-
-    def add_balance(self, platform: str, user_id: str, amount: int) -> None:
-        if platform == "youtube":
-            self.add_samobit_by_youtube_id(user_id, amount)
-        else:
-            self.add_samobit_by_twitch_name(user_id, amount)
-
-    def get_last_daily_generic(self, platform: str, user_id: str) -> Optional[str]:
-        if platform == "youtube":
-            return self.get_last_daily_youtube(user_id)
-        return self.get_last_daily(user_id)
-
-    def set_last_daily_generic(self, platform: str, user_id: str, timestamp: str) -> None:
-        if platform == "youtube":
-            self.set_last_daily_youtube(user_id, timestamp)
-        else:
-            self.set_last_daily(user_id, timestamp)
 
     # --- YOUTUBE ECONOMY METHODS (mirrors Twitch methods, separate balances) ---
 

@@ -1,4 +1,5 @@
 import os
+import subprocess
 from flask import Flask, request, redirect, url_for, session, render_template_string
 from database import DatabaseManager
 from dotenv import load_dotenv
@@ -44,15 +45,15 @@ def login():
         if request.form.get("password") == ADMIN_PANEL_PASSWORD:
             session["logged_in"] = True
             return redirect(url_for("dashboard"))
-        error = "Yanlış şifre."
+        error = "Incorrect password."
     return render_template_string(BASE_STYLE + """
     <div class="container" style="max-width:400px; margin-top:80px;">
         <div class="card">
             <h1>🎮 Samothius Panel</h1>
             {% if error %}<div class="flash">{{ error }}</div>{% endif %}
             <form method="post">
-                <input type="password" name="password" placeholder="Admin şifresi" style="width:100%;box-sizing:border-box;" required>
-                <button type="submit" style="width:100%; margin-top:10px;">Giriş Yap</button>
+                <input type="password" name="password" placeholder="Admin password" style="width:100%;box-sizing:border-box;" required>
+                <button type="submit" style="width:100%; margin-top:10px;">Login</button>
             </form>
         </div>
     </div>
@@ -66,10 +67,10 @@ def logout():
 NAV = """
 <nav>
     <a href="{{ url_for('dashboard') }}">📊 Dashboard</a>
-    <a href="{{ url_for('settings_page') }}">⚙️ Ayarlar</a>
-    <a href="{{ url_for('balances_page') }}">💰 Bakiyeler</a>
-    <a href="{{ url_for('controls_page') }}">🎛️ Kontroller</a>
-    <a href="{{ url_for('logout') }}" style="margin-left:auto;">Çıkış</a>
+    <a href="{{ url_for('settings_page') }}">⚙️ Settings</a>
+    <a href="{{ url_for('balances_page') }}">💰 Balances</a>
+    <a href="{{ url_for('controls_page') }}">🎛️ Controls</a>
+    <a href="{{ url_for('logout') }}" style="margin-left:auto;">Logout</a>
 </nav>
 """
 
@@ -86,14 +87,14 @@ def dashboard():
     <div class="container">
         <h1>📊 Dashboard</h1>
         <div class="grid">
-            <div class="card"><div>Toplam Kullanıcı</div><div class="stat">{{ total_users }}</div></div>
-            <div class="card"><div>Toplam SamoBit Hacmi</div><div class="stat">{{ total_volume }}</div></div>
-            <div class="card"><div>Oyun Durumu</div><div class="stat">{{ "AÇIK" if games_enabled else "KAPALI" }}</div></div>
+            <div class="card"><div>Total Users</div><div class="stat">{{ total_users }}</div></div>
+            <div class="card"><div>Total SamoBit Volume</div><div class="stat">{{ total_volume }}</div></div>
+            <div class="card"><div>Game Status</div><div class="stat">{{ "ON" if games_enabled else "OFF" }}</div></div>
         </div>
         <div class="card">
             <h2>🏆 Top 10</h2>
             <table>
-                <tr><th>#</th><th>Kullanıcı</th><th>Bakiye</th></tr>
+                <tr><th>#</th><th>User</th><th>Balance</th></tr>
                 {% for name, bal in top10 %}
                 <tr><td>{{ loop.index }}</td><td>{{ name }}</td><td>{{ bal }}</td></tr>
                 {% endfor %}
@@ -120,7 +121,7 @@ def settings_page():
 
     return render_template_string(BASE_STYLE + NAV + """
     <div class="container">
-        <h1>⚙️ Oyun Ayarları</h1>
+        <h1>⚙️ Game Settings</h1>
         <form method="post">
         {% for category, items in categories.items() %}
             <div class="card">
@@ -135,7 +136,7 @@ def settings_page():
                 </table>
             </div>
         {% endfor %}
-            <button type="submit">💾 Tüm Ayarları Kaydet</button>
+            <button type="submit">💾 Save All Settings</button>
         </form>
     </div>
     """, categories=categories)
@@ -148,44 +149,58 @@ def balances_page():
     if request.method == "POST":
         action = request.form.get("action")
         target = request.form.get("target", "").strip().lower()
-        amount = int(request.form.get("amount", 0))
         if action == "add":
+            amount = int(request.form.get("amount", 0))
             db.add_samobit_by_twitch_name(target, amount)
-            message = f"{target} kullanıcısına {amount} SamoBit eklendi."
+            message = f"Added {amount} SamoBit to {target}."
         elif action == "set":
+            amount = int(request.form.get("amount", 0))
             db.set_balance(target, amount)
-            message = f"{target} kullanıcısının bakiyesi {amount} olarak ayarlandı."
+            message = f"Set {target}'s balance to {amount}."
+        elif action == "blacklist":
+            db.set_blacklisted(target, True)
+            message = f"{target} has been blacklisted."
 
     query = request.args.get("q", "")
     results = db.search_users(query, 20) if query else db.get_top_richest_users(20)
 
     return render_template_string(BASE_STYLE + NAV + """
     <div class="container">
-        <h1>💰 Bakiye Yönetimi</h1>
+        <h1>💰 Balance Management</h1>
         {% if message %}<div class="flash">{{ message }}</div>{% endif %}
         <div class="card">
             <form method="get">
-                <input type="text" name="q" placeholder="Kullanıcı ara..." value="{{ query }}">
-                <button type="submit">Ara</button>
+                <input type="text" name="q" placeholder="Search user..." value="{{ query }}">
+                <button type="submit">Search</button>
             </form>
         </div>
         <div class="card">
-            <h2>Bakiye Ekle / Ayarla</h2>
+            <h2>Add / Set Balance</h2>
             <form method="post">
-                <input type="text" name="target" placeholder="twitch kullanıcı adı" required>
-                <input type="number" name="amount" placeholder="miktar" required>
+                <input type="text" name="target" placeholder="twitch username" required>
+                <input type="number" name="amount" placeholder="amount" required>
                 <select name="action">
-                    <option value="add">Ekle (+)</option>
-                    <option value="set">Sabitle (=)</option>
+                    <option value="add">Add (+)</option>
+                    <option value="set">Set (=)</option>
                 </select>
-                <button type="submit">Uygula</button>
+                <button type="submit">Apply</button>
             </form>
         </div>
         <div class="card">
             <table>
-                <tr><th>Kullanıcı</th><th>Bakiye</th></tr>
+                <tr><th>User</th><th>Balance</th><th></th></tr>
                 {% for name, bal in results %}
-                <tr><td>{{ name }}</td><td>{{ bal }}</td></tr>
+                <tr>
+                    <td>{{ name }}</td>
+                    <td>{{ bal }}</td>
+                    <td>
+                        <form method="post" style="margin:0;" onsubmit="return confirm('Blacklist {{ name }}? They will stop earning SamoBit.');">
+                            <input type="hidden" name="action" value="blacklist">
+                            <input type="hidden" name="target" value="{{ name }}">
+                            <button type="submit" style="background:#c0392b;">🚫 Blacklist</button>
+                        </form>
+                    </td>
+                </tr>
                 {% endfor %}
             </table>
         </div>
@@ -197,39 +212,66 @@ def controls_page():
     if not require_login():
         return redirect(url_for("login"))
     message = None
+    RESTARTABLE_SERVICES = {
+        "restart_discord": "samothius-discord",
+        "restart_twitch": "samothius-twitch",
+        "restart_youtube": "samothius-youtube",
+    }
     if request.method == "POST":
         action = request.form.get("action")
         if action == "spawn_boss":
             db.create_command("spawn_boss")
-            message = "Boss spawn komutu gönderildi. Bot en fazla 10 saniye içinde işleyecek."
+            message = "Boss spawn command sent. The bot will process it within 10 seconds."
         elif action == "games_on":
             db.set_setting("games_enabled", "true")
-            message = "Oyunlar açıldı."
+            message = "Games enabled."
         elif action == "games_off":
             db.set_setting("games_enabled", "false")
-            message = "Oyunlar kapatıldı."
+            message = "Games disabled."
+        elif action in RESTARTABLE_SERVICES:
+            service = RESTARTABLE_SERVICES[action]
+            try:
+                subprocess.run(["systemctl", "restart", service], check=True, timeout=15)
+                message = f"{service} restarted successfully."
+            except Exception as e:
+                message = f"Failed to restart {service}: {e}"
 
     games_enabled = db.get_setting("games_enabled", True)
     return render_template_string(BASE_STYLE + NAV + """
     <div class="container">
-        <h1>🎛️ Canlı Kontroller</h1>
+        <h1>🎛️ Live Controls</h1>
         {% if message %}<div class="flash">{{ message }}</div>{% endif %}
         <div class="card">
-            <h2>Oyun Durumu: {{ "🟢 AÇIK" if games_enabled else "🔴 KAPALI" }}</h2>
+            <h2>Game Status: {{ "🟢 ON" if games_enabled else "🔴 OFF" }}</h2>
             <form method="post" style="display:inline;">
                 <input type="hidden" name="action" value="games_on">
-                <button type="submit">Oyunları Aç</button>
+                <button type="submit">Enable Games</button>
             </form>
             <form method="post" style="display:inline;">
                 <input type="hidden" name="action" value="games_off">
-                <button type="submit">Oyunları Kapat</button>
+                <button type="submit">Disable Games</button>
             </form>
         </div>
         <div class="card">
-            <h2>👹 Boss Kontrolü</h2>
+            <h2>👹 Boss Control</h2>
             <form method="post">
                 <input type="hidden" name="action" value="spawn_boss">
-                <button type="submit">Boss Spawn Et</button>
+                <button type="submit">Spawn Boss</button>
+            </form>
+        </div>
+        <div class="card">
+            <h2>🔁 Bot Restarts</h2>
+            <form method="post" style="display:inline;" onsubmit="return confirm('Restart the Discord bot?');">
+                <input type="hidden" name="action" value="restart_discord">
+                <button type="submit">Restart Discord Bot</button>
+            </form>
+            <form method="post" style="display:inline;" onsubmit="return confirm('Restart the Twitch bot?');">
+                <input type="hidden" name="action" value="restart_twitch">
+                <button type="submit">Restart Twitch Bot</button>
+            </form>
+            <form method="post" style="display:inline;" onsubmit="return confirm('Restart the YouTube bot?');">
+                <input type="hidden" name="action" value="restart_youtube">
+                <button type="submit">Restart YouTube Bot</button>
             </form>
         </div>
     </div>
