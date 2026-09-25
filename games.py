@@ -9,6 +9,9 @@ import websockets
 import aiohttp
 from twitchio.ext import commands, routines
 
+BOSS_NAMES = ["Dragon", "Goblin King", "Dark Knight"]
+LEGENDARY_BOSS_NAMES = ["Ancient Dragon", "Elder Goblin King", "Void Reaper"]
+
 BANNED_PHRASES = [
     "ai viewers",
     "ai followers",
@@ -86,7 +89,10 @@ class SamothiusTwitchBot(commands.Bot):
         self.boss_state = "IDLE"
         self.current_boss = None
         self.boss_hp = 0
+        self.boss_is_legendary = False
         self.participants = set()
+        self.boss_attack_counts = {}  # {twitch_name: attacks_used_this_fight}
+        self.next_boss_check_time = 0.0
         
         # Heist Event Memory
         self.heist_lobby_active = False
@@ -99,23 +105,24 @@ class SamothiusTwitchBot(commands.Bot):
         # Chat tracking for Boss spawn logic
         self.boss_active_users = set()
 
-        # !first state (bot restart = yeni stream, tek seferlik)
+        # !first state (resets on bot restart = once per stream)
         self.first_claimer = None
 
-        # Fish buff state (Channel Points ile aktive edilir)
+        # Fish buff state (activated via Channel Points)
         self.fish_buff_personal = {}    # {username: expires_at_timestamp}
         self.fish_buff_global_until = 0.0
 
-        # Fishing window state (overlay ile senkron)
+        # Fishing window state (synced with the overlay)
         self.fish_window_active = False
         self.fish_window_participants = set()
 
         # Chat Overlay: connected OBS browser-source WebSocket clients
         self.overlay_clients = set()
-        self._ws_loop = None  # WebSocket sunucusunun kendi event loop'u
+        self._ws_loop = None  # the WebSocket server's own event loop
 
     async def event_ready(self):
         print(f"✅ Twitch Bot connected as {self.nick}")
+        self._schedule_next_boss_check()
         self.gift_samobit_loop.start()
         self.auto_boss_loop.start()
         self.chat_engagement_loop.start()
@@ -128,7 +135,7 @@ class SamothiusTwitchBot(commands.Bot):
 
     # --- CHAT OVERLAY WEBSOCKET BRIDGE ---
     def _start_ws_server_thread(self):
-        """WebSocket sunucusunu TwitchIO'dan bağımsız kendi thread'inde çalıştırır."""
+        """Runs the WebSocket server in its own thread, independent of TwitchIO."""
         self._ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._ws_loop)
         self._ws_loop.run_until_complete(self._run_ws_server())
@@ -175,7 +182,7 @@ class SamothiusTwitchBot(commands.Bot):
         return emotes
 
     async def broadcast_game_event(self, event: dict):
-        """Oyun olaylarını overlay'e gönderir (thread-safe)."""
+        """Sends game events to the overlay (thread-safe)."""
         if not self.overlay_clients or self._ws_loop is None:
             return
         payload = json.dumps(event)
@@ -188,7 +195,7 @@ class SamothiusTwitchBot(commands.Bot):
             pass
 
     async def _send_to_all(self, payload: str):
-        """WS loop'unda çalışır, tüm clientlara gönderir."""
+        """Runs in the WS loop, broadcasts to all clients."""
         if self.overlay_clients:
             await asyncio.gather(
                 *(client.send(payload) for client in list(self.overlay_clients)),
@@ -196,7 +203,7 @@ class SamothiusTwitchBot(commands.Bot):
             )
 
     async def _fishing_window_loop(self):
-        """Her 4-8 dakikada bir 20 saniyelik fishing window açar."""
+        """Opens a 20-second fishing window every 4-8 minutes."""
         await asyncio.sleep(60)
         while True:
             wait = random.randint(240, 480)  # 4-8 dakika
@@ -315,14 +322,23 @@ class SamothiusTwitchBot(commands.Bot):
         except Exception as e:
             print(f"⚠️ Error in gift_samobit_loop: {e}")
             
-    @routines.routine(minutes=45)
+    def _schedule_next_boss_check(self):
+        min_minutes = self.db.get_setting("auto_boss_interval_min_minutes", 30)
+        max_minutes = self.db.get_setting("auto_boss_interval_max_minutes", 60)
+        self.next_boss_check_time = time.time() + random.uniform(min_minutes, max_minutes) * 60
+
+    @routines.routine(minutes=5)
     async def auto_boss_loop(self):
         try:
-            if len(self.boss_active_users) >= 2:
-                if self.boss_state == "IDLE":
-                    await self.spawn_boss_logic()
-                    
+            if time.time() < self.next_boss_check_time:
+                return
+
+            min_chatters = self.db.get_setting("auto_boss_min_chatters", 3)
+            if len(self.boss_active_users) >= min_chatters and self.boss_state == "IDLE":
+                await self.spawn_boss_logic()
+
             self.boss_active_users.clear()
+            self._schedule_next_boss_check()
         except Exception as e:
             print(f"⚠️ Error in auto_boss_loop: {e}")
 
@@ -377,25 +393,49 @@ class SamothiusTwitchBot(commands.Bot):
         if not manual and not self._games_enabled():
             return
         self.boss_state = "ACTIVE"
-        self.current_boss = random.choice(["Dragon", "Goblin King", "Dark Knight"])
-        hp_min = self.db.get_setting("boss_hp_min", 300)
-        hp_max = self.db.get_setting("boss_hp_max", 1000)
-        self.boss_hp = random.randint(hp_min, hp_max)
-        self.boss_max_hp = self.boss_hp
         self.participants.clear()
-        
+        self.boss_attack_counts = {}
+
+        legendary_chance = self.db.get_setting("boss_legendary_chance", 0.20)
+        self.boss_is_legendary = random.random() < legendary_chance
+
+        hp_min = self.db.get_setting("boss_hp_min", 700)
+        hp_max = self.db.get_setting("boss_hp_max", 1200)
+        base_hp = random.randint(hp_min, hp_max)
+
+        if self.boss_is_legendary:
+            self.current_boss = random.choice(LEGENDARY_BOSS_NAMES)
+            hp_multiplier = self.db.get_setting("boss_legendary_hp_multiplier", 1.5)
+            self.boss_hp = int(base_hp * hp_multiplier)
+        else:
+            self.current_boss = random.choice(BOSS_NAMES)
+            self.boss_hp = base_hp
+        self.boss_max_hp = self.boss_hp
+
         chan = self.get_channel(STREAMER_NAME)
         if chan:
-            await chan.send(
-                f"🚨 ⚠️ BOSS SPAWNED ⚠️ 🚨 A wild {self.current_boss} appeared with {self.boss_hp} HP! "
-                f"👉 Type !attack NOW to join the fight! You have 60 seconds! ⚔️"
-            )
+            if self.boss_is_legendary:
+                await chan.send(
+                    f"🌟🚨 LEGENDARY BOSS SPAWNED 🚨🌟 The legendary {self.current_boss} appeared with {self.boss_hp} HP! "
+                    f"👉 Type !attack NOW to join the fight! You have 60 seconds! ⚔️"
+                )
+            else:
+                await chan.send(
+                    f"🚨 ⚠️ BOSS SPAWNED ⚠️ 🚨 A wild {self.current_boss} appeared with {self.boss_hp} HP! "
+                    f"👉 Type !attack NOW to join the fight! You have 60 seconds! ⚔️"
+                )
         await asyncio.sleep(60)
-        
+
         if self.boss_state == "ACTIVE":
             if chan:
                 if len(self.participants) > 0:
-                    await chan.send(f"💀 Time is up! The {self.current_boss} survived with {self.boss_hp} HP and escaped. Better luck next time!")
+                    fee = self.db.get_setting("boss_defeat_fee", 10000)
+                    for p in self.participants:
+                        self.db.add_samobit_by_twitch_name(p, -fee)
+                    await chan.send(
+                        f"💀 Time is up! The {self.current_boss} survived with {self.boss_hp} HP and escaped. "
+                        f"The team retreats — all {len(self.participants)} attackers pay a {fee} {SAMOBIT_EMOTE} maintenance fee for their gear."
+                    )
                 else:
                     await chan.send(f"💀 The {self.current_boss} escaped because no one attacked...")
             self.boss_state = "IDLE"
@@ -448,7 +488,7 @@ class SamothiusTwitchBot(commands.Bot):
                 token_data = await token_resp.json()
                 app_token = token_data.get("access_token")
                 if not app_token:
-                    print(f"⚠️ App token alınamadı: {token_data}")
+                    print(f"⚠️ Could not get app token: {token_data}")
                     return None
 
                 # Broadcaster ID'yi sorgula
@@ -469,7 +509,7 @@ class SamothiusTwitchBot(commands.Bot):
         return None
 
     async def _channel_points_eventsub(self):
-        """Twitch EventSub WebSocket: Channel Points ödüllerini dinler."""
+        """Twitch EventSub WebSocket: listens for Channel Points redemptions."""
         EVENTSUB_WS = "wss://eventsub.wss.twitch.tv/ws"
         REWARD_ACTIONS = {
             "Buy 1000 SamoBits": ("samobit", 1000),
@@ -479,7 +519,7 @@ class SamothiusTwitchBot(commands.Bot):
         }
         broadcaster_id = await self._fetch_broadcaster_id()
         if not broadcaster_id:
-            print("⚠️ Channel Points EventSub disabled: broadcaster ID alınamadı.")
+            print("⚠️ Channel Points EventSub disabled: could not get broadcaster ID.")
             return
 
         while True:
@@ -555,7 +595,7 @@ class SamothiusTwitchBot(commands.Bot):
                                     )
 
             except Exception as e:
-                print(f"⚠️ Channel Points EventSub hatası: {e}. 30s sonra yeniden bağlanıyor...")
+                print(f"⚠️ Channel Points EventSub error: {e}. Reconnecting in 30s...")
                 await asyncio.sleep(30)
 
     # --- TWITCH COMMANDS ---
@@ -586,9 +626,10 @@ class SamothiusTwitchBot(commands.Bot):
         if self.boss_state == "IDLE":
             await ctx.send("  No active boss right now.")
             return
+        label = "🌟 LEGENDARY " if self.boss_is_legendary else ""
         await ctx.send(
-            f"  Boss: {self.current_boss} | Status: {self.boss_state} | "
-            f"Remaining HP: {self.boss_hp} | Participants: {len(self.participants)}"
+            f"  Boss: {label}{self.current_boss} | Status: {self.boss_state} | "
+            f"Remaining HP: {self.boss_hp}/{self.boss_max_hp} | Participants: {len(self.participants)}"
         )
 
     @commands.command(name="spawnboss")
@@ -613,27 +654,47 @@ class SamothiusTwitchBot(commands.Bot):
         if self.boss_state != "ACTIVE":
             await ctx.send(f"  @{user}, there is no active boss to attack right now.")
             return
-        if user in self.participants:
-            await ctx.send(f"  @{user}, you already attacked the boss!")
+
+        max_attacks = self.db.get_setting("boss_max_attacks_per_user", 3)
+        attacks_used = self.boss_attack_counts.get(user, 0)
+        if attacks_used >= max_attacks:
+            await ctx.send(f"  @{user}, you're out of attacks for this boss! ({max_attacks}/{max_attacks} used)")
             return
-        
+
+        self.boss_attack_counts[user] = attacks_used + 1
         self.participants.add(user)
-        
-        damage = random.randint(50, 150)
+
+        miss_chance = self.db.get_setting("boss_miss_chance", 0.15)
+        crit_chance = self.db.get_setting("boss_crit_chance", 0.15)
+        dmg_min = self.db.get_setting("boss_dmg_min", 80)
+        dmg_max = self.db.get_setting("boss_dmg_max", 160)
+
+        roll = random.random()
+        if roll < miss_chance:
+            await ctx.send(f"  💨 @{user} swings at the {self.current_boss}... You slipped! (0 damage)")
+            return
+        elif roll < miss_chance + crit_chance:
+            damage = random.randint(dmg_min, dmg_max) * 2
+            hit_label = "💥 CRITICAL HIT! Massive blow!"
+        else:
+            damage = random.randint(dmg_min, dmg_max)
+            hit_label = "⚔️ A solid strike!"
+
         actual_damage = min(damage, self.boss_hp)
         self.boss_hp -= actual_damage
-        
-        await ctx.send(f"  ⚔️ @{user} dealt {actual_damage} damage to the {self.current_boss}! Remaining HP: {self.boss_hp}")
-        
+
+        await ctx.send(f"  {hit_label} @{user} dealt {actual_damage} damage to the {self.current_boss}! Remaining HP: {self.boss_hp}")
+
         if self.boss_hp <= 0 and self.boss_state == "ACTIVE":
             self.boss_state = "DEFEATED"
-            reward_ratio = self.db.get_setting("boss_reward_ratio", 0.6)
-            reward_min = self.db.get_setting("boss_reward_min", 200)
-            reward_max = self.db.get_setting("boss_reward_max", 800)
-            reward = max(reward_min, min(int(self.boss_max_hp * reward_ratio / max(len(self.participants), 1)), reward_max))
+            if self.boss_is_legendary:
+                reward = self.db.get_setting("boss_legendary_victory_reward", 22500)
+            else:
+                reward = self.db.get_setting("boss_victory_reward", 15000)
             for p in self.participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
-            await ctx.send(f"🎉 The {self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {SAMOBIT_EMOTE}")
+            label = "🌟 LEGENDARY " if self.boss_is_legendary else ""
+            await ctx.send(f"🎉 The {label}{self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {SAMOBIT_EMOTE}")
             self.boss_state = "IDLE"
 
     @commands.command(name="gamble")

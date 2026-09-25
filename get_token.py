@@ -1,7 +1,7 @@
 """
-Twitch user access + refresh token üretir, otomatik .env'e yazar.
-Çalıştır: python3 get_token.py
-Tarayıcında açılan URL'yi onayla, tokenlar otomatik kaydedilir.
+Generates a Twitch user access + refresh token and writes it to .env automatically.
+Run: python3 get_token.py
+Approve the URL that opens in your browser; the tokens are saved automatically.
 """
 import asyncio
 import aiohttp
@@ -22,19 +22,19 @@ async def handle_callback(request):
     global auth_code
     auth_code = request.rel_url.query.get("code")
     if auth_code:
-        return web.Response(text="✅ Token alındı! Bu sekmeyi kapatabilirsin. SSH'e dön.")
-    return web.Response(text="❌ Kod alınamadı.")
+        return web.Response(text="Token received! You can close this tab and go back to SSH.")
+    return web.Response(text="Could not get code.")
 
 async def main():
     global auth_code
 
-    which = input("Bu token hangisi için? [tmi/eventsub]: ").strip().lower()
+    which = input("Which token is this for? [tmi/eventsub]: ").strip().lower()
     if which == "tmi":
         token_key, refresh_key = "TMI_TOKEN", "TMI_REFRESH_TOKEN"
     elif which == "eventsub":
         token_key, refresh_key = "EVENTSUB_TOKEN", "EVENTSUB_REFRESH_TOKEN"
     else:
-        print("❌ Geçersiz seçim, 'tmi' veya 'eventsub' yazmalısın.")
+        print("Invalid choice, enter 'tmi' or 'eventsub'.")
         return
 
     app = web.Application()
@@ -51,9 +51,9 @@ async def main():
         f"&response_type=code"
         f"&scope={SCOPES.replace(' ', '+')}"
     )
-    print(f"\n🌐 Şu URL'yi tarayıcında aç:\n{auth_url}\n")
+    print(f"\nOpen this URL in your browser:\n{auth_url}\n")
 
-    print("⏳ Twitch onayı bekleniyor...")
+    print("Waiting for Twitch authorization...")
     while auth_code is None:
         await asyncio.sleep(0.5)
 
@@ -78,8 +78,8 @@ async def main():
     if access_token and refresh_token:
         _update_env_value(token_key, access_token)
         _update_env_value(refresh_key, refresh_token)
-        print(f"\n✅ {token_key} ve {refresh_key} otomatik olarak .env dosyasına yazıldı!")
+        print(f"\n{token_key} and {refresh_key} written to .env automatically!")
     else:
-        print(f"❌ Token alınamadı: {data}")
+        print(f"Could not get token: {data}")
 
 asyncio.run(main())

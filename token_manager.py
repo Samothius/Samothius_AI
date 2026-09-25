@@ -65,22 +65,22 @@ async def ensure_valid_token_async(token_env_key: str, refresh_env_key: str, cli
 
     refresh_token = os.environ.get(refresh_env_key, "")
     if not refresh_token:
-        print(f"⚠️ {token_env_key} geçersiz ve {refresh_env_key} tanımlı değil. Elle get_token.py çalıştırılmalı.")
+        print(f"⚠️ {token_env_key} is invalid and {refresh_env_key} is not set. Run get_token.py manually.")
         return current_token
 
-    print(f"🔄 {token_env_key} süresi dolmuş, otomatik yenileniyor...")
+    print(f"🔄 {token_env_key} expired, refreshing automatically...")
     new_access, new_refresh = await _refresh_token(refresh_token, client_id, client_secret)
     if not new_access:
-        print(f"⚠️ {token_env_key} otomatik yenilenemedi. Elle get_token.py çalıştırılmalı.")
+        print(f"⚠️ {token_env_key} could not be refreshed automatically. Run get_token.py manually.")
         return current_token
 
     _update_env_value(token_env_key, new_access)
     if new_refresh:
         _update_env_value(refresh_env_key, new_refresh)
-    print(f"✅ {token_env_key} otomatik olarak yenilendi.")
+    print(f"✅ {token_env_key} refreshed automatically.")
     return new_access
 
 
 def ensure_valid_token(token_env_key: str, refresh_env_key: str, client_id: str, client_secret: str) -> str:
-    """Bot event loop'u başlamadan önce, senkron bağlamda kullanım için."""
+    """For synchronous use before the bot event loop starts."""
     return asyncio.run(ensure_valid_token_async(token_env_key, refresh_env_key, client_id, client_secret))
