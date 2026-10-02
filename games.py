@@ -12,6 +12,9 @@ from twitchio.ext import commands, routines
 BOSS_NAMES = ["Dragon", "Goblin King", "Dark Knight"]
 LEGENDARY_BOSS_NAMES = ["Ancient Dragon", "Elder Goblin King", "Void Reaper"]
 
+HEIST_TIERS = ["store", "bank", "vault"]
+HEIST_TIER_EMOJI = {"store": "🏪", "bank": "🏦", "vault": "💎"}
+
 BANNED_PHRASES = [
     "ai viewers",
     "ai followers",
@@ -96,6 +99,7 @@ class SamothiusTwitchBot(commands.Bot):
         
         # Heist Event Memory
         self.heist_lobby_active = False
+        self.heist_active_tier = None
         self.heist_participants = set()
         self.heist_prison_until = {}
         
@@ -308,6 +312,15 @@ class SamothiusTwitchBot(commands.Bot):
     def _games_enabled(self) -> bool:
         return self.db.get_setting("games_enabled", True)
 
+    def _get_heist_tier(self, tier: str) -> dict:
+        return {
+            "stake": self.db.get_setting(f"heist_{tier}_stake", 500),
+            "success_chance": self.db.get_setting(f"heist_{tier}_success_chance", 0.7),
+            "payout_min_mult": self.db.get_setting(f"heist_{tier}_payout_min_mult", 1.4),
+            "payout_max_mult": self.db.get_setting(f"heist_{tier}_payout_max_mult", 1.8),
+            "prison_seconds": self.db.get_setting(f"heist_{tier}_prison_seconds", 180),
+        }
+
     # --- BACKGROUND LOOPS WITH ERROR PROTECTION ---
     @routines.routine(minutes=5)
     async def gift_samobit_loop(self):
@@ -350,7 +363,7 @@ class SamothiusTwitchBot(commands.Bot):
                     "⚔️ A Boss is lurking in the shadows! Keep an eye on the chat for the portal to open. You have 60 seconds to !attack!",
                     f"🎰 Feeling lucky? Try your chance with !gamble <amount> and double your {CURRENCY_NAME}!",
                     f"🎣 Need some extra {CURRENCY_NAME}? Type !fish to see what you can catch in our channel's waters!",
-                    "🦹 Planning a heist? Type !heist to gather your crew and rob the bank. Higher crew size means higher success rate!",
+                    "🦹 Planning a heist? Type !heist store, !heist bank, or !heist vault to stake your SamoBit and gather a crew!",
                     f"💰 Don't forget to check your wealth with !samobit balance! Can you reach the top of the leaderboard?",
                     f"☀️ Claim your free daily 200 {CURRENCY_NAME} with !daily — come back every 24 hours!",
                     f"🦹 Feeling bold? Try !rob @username to steal 20% of their {CURRENCY_NAME}. But watch out — you might get caught!",
@@ -444,34 +457,47 @@ class SamothiusTwitchBot(commands.Bot):
         lobby_seconds = self.db.get_setting("heist_lobby_seconds", 60)
         await asyncio.sleep(lobby_seconds)
         self.heist_lobby_active = False
-        
-        if len(self.heist_participants) == 0:
-            return
-            
-        crew_size = len(self.heist_participants)
-        success_chance = min(30 + (crew_size * 5), 80)
-        roll = random.random() * 100
 
-        reward_min = self.db.get_setting("heist_reward_min", 400)
-        reward_max = self.db.get_setting("heist_reward_max", 900)
+        if len(self.heist_participants) == 0:
+            self.heist_active_tier = None
+            return
+
+        tier = self.heist_active_tier
+        tier_cfg = self._get_heist_tier(tier)
+        crew_size = len(self.heist_participants)
+
+        crew_bonus_per_member = self.db.get_setting("heist_crew_bonus_per_member", 0.08)
+        crew_bonus_max = self.db.get_setting("heist_crew_bonus_max", 0.40)
+        crew_bonus = min((crew_size - 1) * crew_bonus_per_member, crew_bonus_max)
+
         cooldown_seconds = self.db.get_setting("heist_cooldown_seconds", 180)
-        prison_seconds = self.db.get_setting("heist_prison_seconds", 600)
+        prison_seconds = tier_cfg["prison_seconds"]
         prison_minutes = int(prison_seconds / 60)
-        
-        if roll <= success_chance:
-            total_reward = random.randint(reward_min, reward_max) * crew_size
-            reward_each = total_reward // crew_size
+
+        roll = random.random()
+        if roll < tier_cfg["success_chance"]:
+            total_payout = 0
             for p in self.heist_participants:
-                self.db.add_samobit_by_twitch_name(p, reward_each)
+                mult = random.uniform(tier_cfg["payout_min_mult"], tier_cfg["payout_max_mult"]) + crew_bonus
+                payout = int(tier_cfg["stake"] * mult)
+                total_payout += payout
+                self.db.add_samobit_by_twitch_name(p, payout)
                 self._set_cooldown("heist", p, seconds=cooldown_seconds)
-            await chan.send(f"🎉 The heist was a SUCCESS! The crew of {crew_size} stole {total_reward} {SAMOBIT_EMOTE}, split {reward_each} each!")
+            await chan.send(
+                f"🎉 {HEIST_TIER_EMOJI[tier]} The {tier} heist was a SUCCESS! "
+                f"The crew of {crew_size} walked away with {total_payout} {SAMOBIT_EMOTE} total!"
+            )
         else:
             for p in self.heist_participants:
                 self.heist_prison_until[p] = time.time() + prison_seconds
                 self._set_cooldown("heist", p, seconds=cooldown_seconds)
-            await chan.send(f"🚨 BUSTED! The heist failed. The crew of {crew_size} was caught and put in prison for {prison_minutes} minutes!")
-            
+            await chan.send(
+                f"🚨 {HEIST_TIER_EMOJI[tier]} BUSTED! The {tier} heist failed. "
+                f"The crew of {crew_size} lost their stake and is in prison for {prison_minutes} minutes!"
+            )
+
         self.heist_participants.clear()
+        self.heist_active_tier = None
 
     # --- CHANNEL POINTS (EventSub WebSocket) ---
     async def _fetch_broadcaster_id(self) -> Optional[str]:
@@ -748,45 +774,72 @@ class SamothiusTwitchBot(commands.Bot):
             )
 
     @commands.command(name="heist")
-    async def heist(self, ctx):
+    async def heist(self, ctx, location: str = None):
         user = ctx.author.name.lower()
         if not self._games_enabled():
             await ctx.send(f"  @{user}, games are currently disabled.")
             return
         self.db.increment_command_usage("heist")
         prison_until = self.heist_prison_until.get(user, 0)
-        
+
         if prison_until > time.time():
             remaining = int((prison_until - time.time()) / 60)
             await ctx.send(f"  @{user}, you are in prison. About {remaining} mins left.")
             return
-            
+
         remaining = self._get_remaining_cooldown("heist", user)
         if remaining:
             await ctx.send(f"  @{user}, heist cooldown: {remaining}s.")
             return
-            
+
         chan = self.get_channel(STREAMER_NAME)
         if not chan:
             return
-            
+
         if not self.heist_lobby_active:
+            tier = location.lower() if location else None
+            if tier not in HEIST_TIERS:
+                parts = []
+                for t in HEIST_TIERS:
+                    cfg = self._get_heist_tier(t)
+                    parts.append(
+                        f"{HEIST_TIER_EMOJI[t]} {t} (stake {cfg['stake']}, {int(cfg['success_chance'] * 100)}% success)"
+                    )
+                await ctx.send(f"  Choose a target: !heist store | !heist bank | !heist vault  —  " + "  |  ".join(parts))
+                return
+
+            tier_cfg = self._get_heist_tier(tier)
+            bal = self.db.get_balance_by_twitch_name(user)
+            if bal < tier_cfg["stake"]:
+                await ctx.send(f"  @{user}, you need {tier_cfg['stake']} {SAMOBIT_EMOTE} to attempt the {tier} heist. Your balance: {bal}")
+                return
+
             lobby_seconds = self.db.get_setting("heist_lobby_seconds", 60)
+            self.db.add_samobit_by_twitch_name(user, -tier_cfg["stake"])
             self.heist_lobby_active = True
+            self.heist_active_tier = tier
             self.heist_participants = {user}
             await ctx.send(
-                f"  Heist plan started! Type `!heist` within {lobby_seconds}s to join. "
-                f"First: @{user}"
+                f"  {HEIST_TIER_EMOJI[tier]} Heist on the {tier} started! Stake: {tier_cfg['stake']} {SAMOBIT_EMOTE}. "
+                f"Type `!heist` within {lobby_seconds}s to join. First: @{user}"
             )
             self.loop.create_task(self._resolve_heist_lobby(chan))
             return
-            
+
         if user in self.heist_participants:
             await ctx.send(f"  @{user}, you are already in the heist crew.")
             return
-            
+
+        tier = self.heist_active_tier
+        tier_cfg = self._get_heist_tier(tier)
+        bal = self.db.get_balance_by_twitch_name(user)
+        if bal < tier_cfg["stake"]:
+            await ctx.send(f"  @{user}, you need {tier_cfg['stake']} {SAMOBIT_EMOTE} to join the {tier} heist. Your balance: {bal}")
+            return
+
+        self.db.add_samobit_by_twitch_name(user, -tier_cfg["stake"])
         self.heist_participants.add(user)
-        await ctx.send(f"  @{user} joined the heist crew!")
+        await ctx.send(f"  @{user} joined the {tier} heist crew! ({len(self.heist_participants)} total)")
 
     @commands.command(name="daily")
     async def daily(self, ctx):

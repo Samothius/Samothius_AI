@@ -130,10 +130,27 @@ class DatabaseManager:
         ("gamble_win_multiplier", "1.8", "float", "gamble", "Normal win payout multiplier"),
 
         ("heist_lobby_seconds", "60", "int", "heist", "Seconds the heist lobby stays open"),
-        ("heist_reward_min", "400", "int", "heist", "Min reward per crew member on success"),
-        ("heist_reward_max", "900", "int", "heist", "Max reward per crew member on success"),
         ("heist_cooldown_seconds", "180", "int", "heist", "Cooldown per user after a heist resolves"),
-        ("heist_prison_seconds", "600", "int", "heist", "Prison duration on heist failure"),
+        ("heist_crew_bonus_per_member", "0.08", "float", "heist", "Payout multiplier bonus per crew member beyond the first"),
+        ("heist_crew_bonus_max", "0.40", "float", "heist", "Max total crew bonus to the payout multiplier"),
+
+        ("heist_store_stake", "500", "int", "heist", "Store: entry stake"),
+        ("heist_store_success_chance", "0.70", "float", "heist", "Store: success chance (0-1)"),
+        ("heist_store_payout_min_mult", "1.4", "float", "heist", "Store: min payout multiplier on success"),
+        ("heist_store_payout_max_mult", "1.8", "float", "heist", "Store: max payout multiplier on success"),
+        ("heist_store_prison_seconds", "180", "int", "heist", "Store: prison duration on failure"),
+
+        ("heist_bank_stake", "3000", "int", "heist", "Bank: entry stake"),
+        ("heist_bank_success_chance", "0.45", "float", "heist", "Bank: success chance (0-1)"),
+        ("heist_bank_payout_min_mult", "2.2", "float", "heist", "Bank: min payout multiplier on success"),
+        ("heist_bank_payout_max_mult", "2.8", "float", "heist", "Bank: max payout multiplier on success"),
+        ("heist_bank_prison_seconds", "600", "int", "heist", "Bank: prison duration on failure"),
+
+        ("heist_vault_stake", "10000", "int", "heist", "Vault: entry stake"),
+        ("heist_vault_success_chance", "0.25", "float", "heist", "Vault: success chance (0-1)"),
+        ("heist_vault_payout_min_mult", "3.5", "float", "heist", "Vault: min payout multiplier on success"),
+        ("heist_vault_payout_max_mult", "4.5", "float", "heist", "Vault: max payout multiplier on success"),
+        ("heist_vault_prison_seconds", "1200", "int", "heist", "Vault: prison duration on failure"),
 
         ("rob_success_chance", "0.40", "float", "rob", "Chance the rob succeeds (0-1)"),
         ("rob_steal_percent", "0.20", "float", "rob", "Percent of target's balance stolen on success"),
