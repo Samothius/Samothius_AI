@@ -9,6 +9,14 @@ def _to_int(value: str, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
 
+def fmt_bit(amount) -> str:
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return str(amount)
+    sign = "-" if amount < 0 else ""
+    return sign + f"{abs(amount):,}".replace(",", ".")
+
 # Discord
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 ANNOUNCEMENT_CHANNEL_ID = _to_int(os.getenv("ANNOUNCEMENT_CHANNEL_ID"))

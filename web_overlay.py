@@ -4,7 +4,7 @@ import urllib.request
 import urllib.parse
 from flask import Flask, render_template_string
 from database import DatabaseManager
-from config import CHAT_OVERLAY_WS_PORT, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, STREAMER_NAME
+from config import CHAT_OVERLAY_WS_PORT, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, STREAMER_NAME, fmt_bit
 
 app = Flask(__name__)
 db = DatabaseManager()
@@ -259,7 +259,7 @@ def render_leaderboard_entries():
         <div class="lb-entry {tier_class}">
             <span class="rank-badge">{rank}</span>
             <span class="lb-name">{display_name}</span>
-            <span class="lb-balance">{b} <img src="/static/samobit.png" class="icon"></span>
+            <span class="lb-balance">{fmt_bit(b)} <img src="/static/samobit.png" class="icon"></span>
         </div>'''
     return entries
 

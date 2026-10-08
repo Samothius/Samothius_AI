@@ -68,7 +68,8 @@ from config import (
     EVENTSUB_REFRESH_TOKEN,
     STREAMER_NAME,
     CHAT_OVERLAY_WS_PORT,
-    SAMOBIT_EMOTE
+    SAMOBIT_EMOTE,
+    fmt_bit
 )
 from database import DatabaseManager
 from token_manager import ensure_valid_token, ensure_valid_token_async
@@ -210,7 +211,7 @@ class SamothiusTwitchBot(commands.Bot):
         """Opens a 20-second fishing window every 4-8 minutes."""
         await asyncio.sleep(60)
         while True:
-            wait = random.randint(240, 480)  # 4-8 dakika
+            wait = random.randint(240, 480)  # 4-8 minutes
             await asyncio.sleep(wait)
 
             chan = self.get_channel(STREAMER_NAME)
@@ -447,7 +448,7 @@ class SamothiusTwitchBot(commands.Bot):
                         self.db.add_samobit_by_twitch_name(p, -fee)
                     await chan.send(
                         f"💀 Time is up! The {self.current_boss} survived with {self.boss_hp} HP and escaped. "
-                        f"The team retreats — all {len(self.participants)} attackers pay a {fee} {SAMOBIT_EMOTE} maintenance fee for their gear."
+                        f"The team retreats — all {len(self.participants)} attackers pay a {fmt_bit(fee)} {SAMOBIT_EMOTE} maintenance fee for their gear."
                     )
                 else:
                     await chan.send(f"💀 The {self.current_boss} escaped because no one attacked...")
@@ -485,7 +486,7 @@ class SamothiusTwitchBot(commands.Bot):
                 self._set_cooldown("heist", p, seconds=cooldown_seconds)
             await chan.send(
                 f"🎉 {HEIST_TIER_EMOJI[tier]} The {tier} heist was a SUCCESS! "
-                f"The crew of {crew_size} walked away with {total_payout} {SAMOBIT_EMOTE} total!"
+                f"The crew of {crew_size} walked away with {fmt_bit(total_payout)} {SAMOBIT_EMOTE} total!"
             )
         else:
             for p in self.heist_participants:
@@ -540,8 +541,8 @@ class SamothiusTwitchBot(commands.Bot):
         REWARD_ACTIONS = {
             "Buy 1000 SamoBits": ("samobit", 1000),
             "Buy 5000 SamoBits": ("samobit", 5000),
-            "Fish Buff":         ("fish_personal", 7200),   # 2 saat
-            "Global Fish Buff":  ("fish_global",   1800),   # 30 dk
+            "Fish Buff":         ("fish_personal", 7200),   # 2 hours
+            "Global Fish Buff":  ("fish_global",   1800),   # 30 min
         }
         broadcaster_id = await self._fetch_broadcaster_id()
         if not broadcaster_id:
@@ -602,8 +603,8 @@ class SamothiusTwitchBot(commands.Bot):
                                 if chan:
                                     await chan.send(
                                         f"  🎉 @{redeemer} redeemed '{reward_title}' and received "
-                                        f"{value} {SAMOBIT_EMOTE}! "
-                                        f"Balance: {self.db.get_balance_by_twitch_name(redeemer)} {SAMOBIT_EMOTE}"
+                                        f"{fmt_bit(value)} {SAMOBIT_EMOTE}! "
+                                        f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(redeemer))} {SAMOBIT_EMOTE}"
                                     )
                             elif kind == "fish_personal":
                                 self.fish_buff_personal[redeemer] = time.time() + value
@@ -645,7 +646,7 @@ class SamothiusTwitchBot(commands.Bot):
         msg = ctx.message.content.split()
         if len(msg) > 1 and msg[1].lower() == "balance":
             bal = self.db.get_balance_by_twitch_name(user)
-            await ctx.send(f"  @{user}, you currently have {bal} {SAMOBIT_EMOTE}")
+            await ctx.send(f"  @{user}, you currently have {fmt_bit(bal)} {SAMOBIT_EMOTE}")
 
     @commands.command(name="bossstatus")
     async def boss_status(self, ctx):
@@ -720,7 +721,7 @@ class SamothiusTwitchBot(commands.Bot):
             for p in self.participants:
                 self.db.add_samobit_by_twitch_name(p, reward)
             label = "🌟 LEGENDARY " if self.boss_is_legendary else ""
-            await ctx.send(f"🎉 The {label}{self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {reward} {SAMOBIT_EMOTE}")
+            await ctx.send(f"🎉 The {label}{self.current_boss} was DEFEATED by @{user}! All {len(self.participants)} attackers earned {fmt_bit(reward)} {SAMOBIT_EMOTE}")
             self.boss_state = "IDLE"
 
     @commands.command(name="gamble")
@@ -738,7 +739,7 @@ class SamothiusTwitchBot(commands.Bot):
         bal = self.db.get_balance_by_twitch_name(user)
         min_bet = self.db.get_setting("gamble_min_bet", 10)
         if amount < min_bet:
-            await ctx.send(f"  @{user}, minimum bet is {min_bet} {SAMOBIT_EMOTE}")
+            await ctx.send(f"  @{user}, minimum bet is {fmt_bit(min_bet)} {SAMOBIT_EMOTE}")
             return
         if amount > bal:
             await ctx.send(f"  @{user}, insufficient balance.")
@@ -757,20 +758,20 @@ class SamothiusTwitchBot(commands.Bot):
             winnings = int(amount * jackpot_mult)
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
-                f"  JACKPOT @{user}! Net +{winnings - amount} {SAMOBIT_EMOTE} "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+                f"  JACKPOT @{user}! Net +{fmt_bit(winnings - amount)} {SAMOBIT_EMOTE} "
+                f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
             )
         elif roll < win_chance:
             winnings = int(amount * win_mult)
             self.db.add_samobit_by_twitch_name(user, winnings)
             await ctx.send(
-                f"  @{user} won! Net +{amount} {SAMOBIT_EMOTE} "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+                f"  @{user} won! Net +{fmt_bit(amount)} {SAMOBIT_EMOTE} "
+                f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
             )
         else:
             await ctx.send(
-                f"  @{user} lost. -{amount} {SAMOBIT_EMOTE} "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+                f"  @{user} lost. -{fmt_bit(amount)} {SAMOBIT_EMOTE} "
+                f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
             )
 
     @commands.command(name="heist")
@@ -803,7 +804,7 @@ class SamothiusTwitchBot(commands.Bot):
                 for t in HEIST_TIERS:
                     cfg = self._get_heist_tier(t)
                     parts.append(
-                        f"{HEIST_TIER_EMOJI[t]} {t} (stake {cfg['stake']}, {int(cfg['success_chance'] * 100)}% success)"
+                        f"{HEIST_TIER_EMOJI[t]} {t} (stake {fmt_bit(cfg['stake'])}, {int(cfg['success_chance'] * 100)}% success)"
                     )
                 await ctx.send(f"  Choose a target: !heist store | !heist bank | !heist vault  —  " + "  |  ".join(parts))
                 return
@@ -811,7 +812,7 @@ class SamothiusTwitchBot(commands.Bot):
             tier_cfg = self._get_heist_tier(tier)
             bal = self.db.get_balance_by_twitch_name(user)
             if bal < tier_cfg["stake"]:
-                await ctx.send(f"  @{user}, you need {tier_cfg['stake']} {SAMOBIT_EMOTE} to attempt the {tier} heist. Your balance: {bal}")
+                await ctx.send(f"  @{user}, you need {fmt_bit(tier_cfg['stake'])} {SAMOBIT_EMOTE} to attempt the {tier} heist. Your balance: {fmt_bit(bal)}")
                 return
 
             lobby_seconds = self.db.get_setting("heist_lobby_seconds", 60)
@@ -820,7 +821,7 @@ class SamothiusTwitchBot(commands.Bot):
             self.heist_active_tier = tier
             self.heist_participants = {user}
             await ctx.send(
-                f"  {HEIST_TIER_EMOJI[tier]} Heist on the {tier} started! Stake: {tier_cfg['stake']} {SAMOBIT_EMOTE}. "
+                f"  {HEIST_TIER_EMOJI[tier]} Heist on the {tier} started! Stake: {fmt_bit(tier_cfg['stake'])} {SAMOBIT_EMOTE}. "
                 f"Type `!heist` within {lobby_seconds}s to join. First: @{user}"
             )
             self.loop.create_task(self._resolve_heist_lobby(chan))
@@ -834,7 +835,7 @@ class SamothiusTwitchBot(commands.Bot):
         tier_cfg = self._get_heist_tier(tier)
         bal = self.db.get_balance_by_twitch_name(user)
         if bal < tier_cfg["stake"]:
-            await ctx.send(f"  @{user}, you need {tier_cfg['stake']} {SAMOBIT_EMOTE} to join the {tier} heist. Your balance: {bal}")
+            await ctx.send(f"  @{user}, you need {fmt_bit(tier_cfg['stake'])} {SAMOBIT_EMOTE} to join the {tier} heist. Your balance: {fmt_bit(bal)}")
             return
 
         self.db.add_samobit_by_twitch_name(user, -tier_cfg["stake"])
@@ -859,8 +860,8 @@ class SamothiusTwitchBot(commands.Bot):
         self.db.add_samobit_by_twitch_name(user, reward)
         self.db.set_last_daily(user, now.isoformat())
         await ctx.send(
-            f"  ☀️ @{user} claimed their daily {reward} {SAMOBIT_EMOTE}! "
-            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+            f"  ☀️ @{user} claimed their daily {fmt_bit(reward)} {SAMOBIT_EMOTE}! "
+            f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
         )
 
     @commands.command(name="rob")
@@ -885,7 +886,7 @@ class SamothiusTwitchBot(commands.Bot):
         min_target_balance = self.db.get_setting("rob_min_target_balance", 50)
         target_bal = self.db.get_balance_by_twitch_name(target)
         if target_bal < min_target_balance:
-            await ctx.send(f"  @{user}, @{target} doesn't have enough {SAMOBIT_EMOTE} to rob (min {min_target_balance}).")
+            await ctx.send(f"  @{user}, @{target} doesn't have enough {SAMOBIT_EMOTE} to rob (min {fmt_bit(min_target_balance)}).")
             return
         cooldown_seconds = self.db.get_setting("rob_cooldown_seconds", 300)
         self._set_cooldown("rob", user, seconds=cooldown_seconds)
@@ -896,8 +897,8 @@ class SamothiusTwitchBot(commands.Bot):
             self.db.add_samobit_by_twitch_name(target, -steal)
             self.db.add_samobit_by_twitch_name(user, steal)
             await ctx.send(
-                f"  🦹 @{user} successfully robbed @{target} for {steal} {SAMOBIT_EMOTE}! "
-                f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+                f"  🦹 @{user} successfully robbed @{target} for {fmt_bit(steal)} {SAMOBIT_EMOTE}! "
+                f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
             )
         else:
             penalty_percent = self.db.get_setting("rob_penalty_percent", 0.15)
@@ -909,7 +910,7 @@ class SamothiusTwitchBot(commands.Bot):
             self.db.add_samobit_by_twitch_name(user, -actual_penalty)
             await ctx.send(
                 f"  🚨 @{user} got caught trying to rob @{target}! "
-                f"Penalty: -{actual_penalty} {SAMOBIT_EMOTE}."
+                f"Penalty: -{fmt_bit(actual_penalty)} {SAMOBIT_EMOTE}."
             )
 
     @commands.command(name="gift")
@@ -937,7 +938,7 @@ class SamothiusTwitchBot(commands.Bot):
             return
         self.db.add_samobit_by_twitch_name(user, -amount)
         self.db.add_samobit_by_twitch_name(target, amount)
-        await ctx.send(f"  🎁 @{user} gifted {amount} {SAMOBIT_EMOTE} to @{target}!")
+        await ctx.send(f"  🎁 @{user} gifted {fmt_bit(amount)} {SAMOBIT_EMOTE} to @{target}!")
 
     @commands.command(name="first")
     async def first(self, ctx):
@@ -950,8 +951,8 @@ class SamothiusTwitchBot(commands.Bot):
         reward = self.db.get_setting("first_reward", 500)
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
-            f"  🥇 @{user} was FIRST in chat today! +{reward} {SAMOBIT_EMOTE}! "
-            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+            f"  🥇 @{user} was FIRST in chat today! +{fmt_bit(reward)} {SAMOBIT_EMOTE}! "
+            f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
         )
 
     @commands.command(name="fish")
@@ -1016,8 +1017,8 @@ class SamothiusTwitchBot(commands.Bot):
 
         self.db.add_samobit_by_twitch_name(user, reward)
         await ctx.send(
-            f"  @{user} caught {tier}!{buff_tag} +{reward} {SAMOBIT_EMOTE} "
-            f"Balance: {self.db.get_balance_by_twitch_name(user)} {SAMOBIT_EMOTE}"
+            f"  @{user} caught {tier}!{buff_tag} +{fmt_bit(reward)} {SAMOBIT_EMOTE} "
+            f"Balance: {fmt_bit(self.db.get_balance_by_twitch_name(user))} {SAMOBIT_EMOTE}"
         )
 
 if __name__ == "__main__":
